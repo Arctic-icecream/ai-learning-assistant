@@ -39,3 +39,6 @@ Browser
 Today's work should be committed and pushed after verification so GitHub shows
 daily progress.
 
+If a pushed commit does not appear on the GitHub contribution graph, check that
+the commit email is connected to the GitHub account and that the commit is on
+the repository's default branch.
