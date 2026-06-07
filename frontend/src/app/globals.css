@@ -130,3 +130,68 @@ input[type="file"] {
   margin: 0;
   overflow-wrap: anywhere;
 }
+
+.documents-panel {
+  display: grid;
+  gap: 14px;
+  width: min(760px, 100%);
+  margin-top: 32px;
+  padding-top: 28px;
+  border-top: 1px solid #d8dee8;
+}
+
+.documents-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+h2 {
+  margin: 0;
+  font-size: 22px;
+}
+
+.secondary-button {
+  min-height: 38px;
+  padding: 0 14px;
+  border: 1px solid #c7d0dd;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #17202a;
+  cursor: pointer;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.documents-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.documents-list li {
+  display: grid;
+  grid-template-columns: minmax(160px, 1.4fr) minmax(120px, 0.8fr) minmax(90px, 0.5fr) minmax(160px, 0.8fr);
+  gap: 12px;
+  align-items: center;
+  padding: 12px 0;
+  border-top: 1px solid #e3e8ef;
+  color: #4f5b67;
+  font-size: 14px;
+}
+
+.document-name {
+  min-width: 0;
+  color: #17202a;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 720px) {
+  .documents-list li {
+    grid-template-columns: 1fr;
+  }
+}

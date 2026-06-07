@@ -26,8 +26,23 @@ One-click stop on Windows:
 .\stop-dev.cmd
 ```
 
+Clear uploaded development test data:
+
+```powershell
+.\reset-dev-data.cmd
+```
+
 The start script launches PostgreSQL with Docker Compose, then opens separate
 PowerShell windows for the FastAPI backend and Next.js frontend.
+The stop script shuts services down without deleting database data. The reset
+script clears the `documents` table and removes uploaded test files.
+
+API checks:
+
+```powershell
+GET http://127.0.0.1:8000/health
+GET http://127.0.0.1:8000/documents
+```
 
 Database:
 

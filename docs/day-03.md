@@ -45,3 +45,25 @@ The first version of the `documents` table stores:
 - storage path
 - creation time
 
+## Checking Stored Documents
+
+The backend exposes:
+
+```text
+GET /documents
+```
+
+The frontend also displays stored document records so we can confirm what is in
+the database without opening `psql`.
+
+## Resetting Development Data
+
+Stopping the app should not delete data. Development test data is cleared only
+when running:
+
+```powershell
+.\reset-dev-data.cmd
+```
+
+This clears the `documents` table and removes uploaded files from
+`backend/storage/uploads`, while keeping `.gitkeep`.

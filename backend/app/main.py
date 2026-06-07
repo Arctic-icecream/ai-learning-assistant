@@ -62,3 +62,19 @@ async def upload_document(
         "size_bytes": document.size_bytes,
         "storage_path": document.storage_path,
     }
+
+
+@app.get("/documents")
+def list_documents(db: Session = Depends(get_db)) -> list[dict[str, object]]:
+    documents = db.query(Document).order_by(Document.created_at.desc()).all()
+
+    return [
+        {
+            "id": document.id,
+            "filename": document.original_filename,
+            "content_type": document.content_type,
+            "size_bytes": document.size_bytes,
+            "created_at": document.created_at.isoformat(),
+        }
+        for document in documents
+    ]

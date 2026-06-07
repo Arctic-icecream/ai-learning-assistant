@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 type HealthState = {
   status: "idle" | "loading" | "success" | "error";
@@ -18,6 +18,14 @@ type UploadState = {
   };
 };
 
+type DocumentRecord = {
+  id: number;
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+  created_at: string;
+};
+
 export default function Home() {
   const [health, setHealth] = useState<HealthState>({
     status: "idle",
@@ -28,6 +36,14 @@ export default function Home() {
     status: "idle",
     message: "No file uploaded yet."
   });
+  const [documents, setDocuments] = useState<DocumentRecord[]>([]);
+  const [documentsMessage, setDocumentsMessage] = useState(
+    "Document list has not been loaded yet."
+  );
+
+  useEffect(() => {
+    void loadDocuments();
+  }, []);
 
   async function checkBackend() {
     setHealth({
@@ -93,12 +109,37 @@ export default function Home() {
         message: "Document uploaded and saved to the database.",
         document: data
       });
+      await loadDocuments();
     } catch (error) {
       setUpload({
         status: "error",
         message:
           error instanceof Error ? error.message : "Could not upload document."
       });
+    }
+  }
+
+  async function loadDocuments() {
+    setDocumentsMessage("Loading documents from the database...");
+
+    try {
+      const response = await fetch("http://127.0.0.1:8000/documents");
+
+      if (!response.ok) {
+        throw new Error(`Document list failed with ${response.status}`);
+      }
+
+      const data = (await response.json()) as DocumentRecord[];
+      setDocuments(data);
+      setDocumentsMessage(
+        data.length === 0
+          ? "No documents are stored yet."
+          : `${data.length} document record${data.length === 1 ? "" : "s"} stored.`
+      );
+    } catch (error) {
+      setDocumentsMessage(
+        error instanceof Error ? error.message : "Could not load documents."
+      );
     }
   }
 
@@ -163,6 +204,27 @@ export default function Home() {
                 <dd>{upload.document.size_bytes} bytes</dd>
               </div>
             </dl>
+          ) : null}
+        </div>
+        <div className="documents-panel">
+          <div className="documents-heading">
+            <h2>Stored documents</h2>
+            <button className="secondary-button" onClick={loadDocuments} type="button">
+              Refresh
+            </button>
+          </div>
+          <p className="health-message">{documentsMessage}</p>
+          {documents.length > 0 ? (
+            <ul className="documents-list">
+              {documents.map((document) => (
+                <li key={document.id}>
+                  <span className="document-name">{document.filename}</span>
+                  <span>{document.content_type}</span>
+                  <span>{document.size_bytes} bytes</span>
+                  <span>{new Date(document.created_at).toLocaleString()}</span>
+                </li>
+              ))}
+            </ul>
           ) : null}
         </div>
       </section>
