@@ -14,6 +14,21 @@ Set up the project structure, Git workflow, and minimal frontend/backend skeleto
 
 ## Run Locally
 
+One-click start on Windows:
+
+```powershell
+.\start-dev.cmd
+```
+
+One-click stop on Windows:
+
+```powershell
+.\stop-dev.cmd
+```
+
+The start script launches PostgreSQL with Docker Compose, then opens separate
+PowerShell windows for the FastAPI backend and Next.js frontend.
+
 Database:
 
 ```powershell

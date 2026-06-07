@@ -14,6 +14,7 @@ node_modules/
 out/
 npm-debug.log*
 logs/
+.dev-pids/
 
 # Uploaded files
 backend/storage/uploads/*
