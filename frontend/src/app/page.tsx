@@ -7,10 +7,26 @@ type HealthState = {
   message: string;
 };
 
+type UploadState = {
+  status: "idle" | "loading" | "success" | "error";
+  message: string;
+  document?: {
+    id: number;
+    filename: string;
+    content_type: string;
+    size_bytes: number;
+  };
+};
+
 export default function Home() {
   const [health, setHealth] = useState<HealthState>({
     status: "idle",
     message: "Backend has not been checked yet."
+  });
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [upload, setUpload] = useState<UploadState>({
+    status: "idle",
+    message: "No file uploaded yet."
   });
 
   async function checkBackend() {
@@ -43,10 +59,53 @@ export default function Home() {
     }
   }
 
+  async function uploadDocument() {
+    if (!selectedFile) {
+      setUpload({
+        status: "error",
+        message: "Please choose a file first."
+      });
+      return;
+    }
+
+    setUpload({
+      status: "loading",
+      message: "Uploading document..."
+    });
+
+    const formData = new FormData();
+    formData.append("file", selectedFile);
+
+    try {
+      const response = await fetch("http://127.0.0.1:8000/documents/upload", {
+        method: "POST",
+        body: formData
+      });
+
+      if (!response.ok) {
+        throw new Error(`Upload failed with ${response.status}`);
+      }
+
+      const data = (await response.json()) as UploadState["document"];
+
+      setUpload({
+        status: "success",
+        message: "Document uploaded and saved to the database.",
+        document: data
+      });
+    } catch (error) {
+      setUpload({
+        status: "error",
+        message:
+          error instanceof Error ? error.message : "Could not upload document."
+      });
+    }
+  }
+
   return (
     <main className="shell">
       <section className="hero">
-        <p className="eyebrow">Day 2 connection</p>
+        <p className="eyebrow">Day 3 upload</p>
         <h1>AI Learning Assistant</h1>
         <p className="summary">
           Upload learning materials, build a knowledge base, and ask questions
@@ -64,6 +123,47 @@ export default function Home() {
           <p className={`health-message ${health.status}`}>
             Backend status: {health.message}
           </p>
+        </div>
+        <div className="upload-panel">
+          <label className="file-label" htmlFor="document-upload">
+            Choose study material
+          </label>
+          <input
+            id="document-upload"
+            onChange={(event) =>
+              setSelectedFile(event.target.files?.[0] ?? null)
+            }
+            type="file"
+          />
+          <button
+            className="primary-button"
+            disabled={upload.status === "loading"}
+            onClick={uploadDocument}
+            type="button"
+          >
+            {upload.status === "loading" ? "Uploading..." : "Upload File"}
+          </button>
+          <p className={`health-message ${upload.status}`}>{upload.message}</p>
+          {upload.document ? (
+            <dl className="upload-result">
+              <div>
+                <dt>Database ID</dt>
+                <dd>{upload.document.id}</dd>
+              </div>
+              <div>
+                <dt>Filename</dt>
+                <dd>{upload.document.filename}</dd>
+              </div>
+              <div>
+                <dt>Content type</dt>
+                <dd>{upload.document.content_type}</dd>
+              </div>
+              <div>
+                <dt>Size</dt>
+                <dd>{upload.document.size_bytes} bytes</dd>
+              </div>
+            </dl>
+          ) : null}
         </div>
       </section>
     </main>

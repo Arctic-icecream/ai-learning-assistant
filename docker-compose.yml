@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: ai-learning-assistant-postgres
+    environment:
+      POSTGRES_DB: ai_learning_assistant
+      POSTGRES_USER: ai_learning_user
+      POSTGRES_PASSWORD: ai_learning_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
+

@@ -86,3 +86,47 @@ h1 {
   color: #b42318;
   font-weight: 700;
 }
+
+.upload-panel {
+  display: grid;
+  gap: 14px;
+  width: min(560px, 100%);
+  margin-top: 32px;
+  padding-top: 28px;
+  border-top: 1px solid #d8dee8;
+}
+
+.file-label {
+  color: #17202a;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+input[type="file"] {
+  width: 100%;
+  color: #4f5b67;
+  font-size: 15px;
+}
+
+.upload-result {
+  display: grid;
+  gap: 10px;
+  margin: 4px 0 0;
+}
+
+.upload-result div {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 12px;
+}
+
+.upload-result dt {
+  color: #4f5b67;
+  font-weight: 700;
+}
+
+.upload-result dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}

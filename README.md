@@ -14,6 +14,12 @@ Set up the project structure, Git workflow, and minimal frontend/backend skeleto
 
 ## Run Locally
 
+Database:
+
+```powershell
+docker compose up -d
+```
+
 Backend:
 
 ```powershell
