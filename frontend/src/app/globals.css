@@ -174,7 +174,7 @@ h2 {
 
 .documents-list li {
   display: grid;
-  grid-template-columns: minmax(160px, 1.4fr) minmax(120px, 0.8fr) minmax(90px, 0.5fr) minmax(160px, 0.8fr);
+  grid-template-columns: minmax(160px, 1.4fr) minmax(120px, 0.8fr) minmax(90px, 0.5fr) minmax(80px, 0.5fr) minmax(90px, 0.5fr) minmax(160px, 0.8fr);
   gap: 12px;
   align-items: center;
   padding: 12px 0;
@@ -188,6 +188,23 @@ h2 {
   color: #17202a;
   font-weight: 700;
   overflow-wrap: anywhere;
+}
+
+.parse-status {
+  font-weight: 700;
+}
+
+.parse-status.parsed {
+  color: #1b7f4c;
+}
+
+.parse-status.failed {
+  color: #b42318;
+}
+
+.parse-status.empty,
+.parse-status.skipped {
+  color: #8a5a00;
 }
 
 @media (max-width: 720px) {

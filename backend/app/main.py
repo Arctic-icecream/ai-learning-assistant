@@ -3,10 +3,12 @@ from uuid import uuid4
 
 from fastapi import Depends, FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from .database import Base, engine, get_db
 from .models import Document
+from .pdf_parser import extract_pdf_text
 
 app = FastAPI(title="AI Learning Assistant API")
 
@@ -25,6 +27,27 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 @app.on_event("startup")
 def create_tables() -> None:
     Base.metadata.create_all(bind=engine)
+    ensure_document_parse_columns()
+
+
+def ensure_document_parse_columns() -> None:
+    with engine.begin() as connection:
+        connection.execute(
+            text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS extracted_text TEXT")
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE documents ADD COLUMN IF NOT EXISTS text_char_count INTEGER NOT NULL DEFAULT 0"
+            )
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE documents ADD COLUMN IF NOT EXISTS parse_status VARCHAR(50) NOT NULL DEFAULT 'pending'"
+            )
+        )
+        connection.execute(
+            text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS parse_error TEXT")
+        )
 
 
 @app.get("/health")
@@ -42,13 +65,32 @@ async def upload_document(
     stored_filename = f"{uuid4().hex}_{original_filename}"
     storage_path = UPLOAD_DIR / stored_filename
     storage_path.write_bytes(file_bytes)
+    content_type = file.content_type or "application/octet-stream"
+
+    parse_status = "skipped"
+    parse_error = None
+    extracted_text = None
+    text_char_count = 0
+
+    if content_type == "application/pdf" or original_filename.lower().endswith(".pdf"):
+        try:
+            extracted_text = extract_pdf_text(storage_path)
+            text_char_count = len(extracted_text)
+            parse_status = "parsed" if extracted_text else "empty"
+        except Exception as error:
+            parse_status = "failed"
+            parse_error = str(error)
 
     document = Document(
         original_filename=original_filename,
         stored_filename=stored_filename,
-        content_type=file.content_type or "application/octet-stream",
+        content_type=content_type,
         size_bytes=len(file_bytes),
         storage_path=str(storage_path),
+        extracted_text=extracted_text,
+        text_char_count=text_char_count,
+        parse_status=parse_status,
+        parse_error=parse_error,
     )
 
     db.add(document)
@@ -61,6 +103,9 @@ async def upload_document(
         "content_type": document.content_type,
         "size_bytes": document.size_bytes,
         "storage_path": document.storage_path,
+        "parse_status": document.parse_status,
+        "text_char_count": document.text_char_count,
+        "parse_error": document.parse_error,
     }
 
 
@@ -74,6 +119,9 @@ def list_documents(db: Session = Depends(get_db)) -> list[dict[str, object]]:
             "filename": document.original_filename,
             "content_type": document.content_type,
             "size_bytes": document.size_bytes,
+            "parse_status": document.parse_status,
+            "text_char_count": document.text_char_count,
+            "parse_error": document.parse_error,
             "created_at": document.created_at.isoformat(),
         }
         for document in documents

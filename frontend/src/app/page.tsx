@@ -15,6 +15,9 @@ type UploadState = {
     filename: string;
     content_type: string;
     size_bytes: number;
+    parse_status: string;
+    text_char_count: number;
+    parse_error: string | null;
   };
 };
 
@@ -23,6 +26,9 @@ type DocumentRecord = {
   filename: string;
   content_type: string;
   size_bytes: number;
+  parse_status: string;
+  text_char_count: number;
+  parse_error: string | null;
   created_at: string;
 };
 
@@ -146,7 +152,7 @@ export default function Home() {
   return (
     <main className="shell">
       <section className="hero">
-        <p className="eyebrow">Day 3 upload</p>
+        <p className="eyebrow">Day 4 PDF parsing</p>
         <h1>AI Learning Assistant</h1>
         <p className="summary">
           Upload learning materials, build a knowledge base, and ask questions
@@ -203,6 +209,20 @@ export default function Home() {
                 <dt>Size</dt>
                 <dd>{upload.document.size_bytes} bytes</dd>
               </div>
+              <div>
+                <dt>Parse status</dt>
+                <dd>{upload.document.parse_status}</dd>
+              </div>
+              <div>
+                <dt>Text chars</dt>
+                <dd>{upload.document.text_char_count}</dd>
+              </div>
+              {upload.document.parse_error ? (
+                <div>
+                  <dt>Parse error</dt>
+                  <dd>{upload.document.parse_error}</dd>
+                </div>
+              ) : null}
             </dl>
           ) : null}
         </div>
@@ -221,6 +241,10 @@ export default function Home() {
                   <span className="document-name">{document.filename}</span>
                   <span>{document.content_type}</span>
                   <span>{document.size_bytes} bytes</span>
+                  <span className={`parse-status ${document.parse_status}`}>
+                    {document.parse_status}
+                  </span>
+                  <span>{document.text_char_count} chars</span>
                   <span>{new Date(document.created_at).toLocaleString()}</span>
                 </li>
               ))}
