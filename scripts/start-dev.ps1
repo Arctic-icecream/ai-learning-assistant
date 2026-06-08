@@ -8,9 +8,32 @@ $FrontendPidFile = Join-Path $PidDir "frontend.pid"
 New-Item -ItemType Directory -Force -Path $PidDir | Out-Null
 
 Write-Host "Checking Docker Desktop..."
+$DockerReady = $false
 docker info | Out-Null
-if ($LASTEXITCODE -ne 0) {
-  throw "Docker is not running. Open Docker Desktop first, then run start-dev.cmd again."
+if ($LASTEXITCODE -eq 0) {
+  $DockerReady = $true
+} else {
+  $DockerDesktopPath = "C:\Program Files\Docker\Docker\Docker Desktop.exe"
+  if (-not (Test-Path $DockerDesktopPath)) {
+    throw "Docker Desktop was not found at $DockerDesktopPath."
+  }
+
+  Write-Host "Docker is not running. Starting Docker Desktop..."
+  Start-Process -FilePath $DockerDesktopPath | Out-Null
+
+  Write-Host "Waiting for Docker engine to become ready..."
+  for ($Attempt = 1; $Attempt -le 60; $Attempt++) {
+    Start-Sleep -Seconds 2
+    docker info | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+      $DockerReady = $true
+      break
+    }
+  }
+}
+
+if (-not $DockerReady) {
+  throw "Docker did not become ready in time. Check Docker Desktop and try start-dev.cmd again."
 }
 
 Write-Host "Starting PostgreSQL with Docker Compose..."
