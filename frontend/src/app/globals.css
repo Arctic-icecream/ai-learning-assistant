@@ -174,7 +174,7 @@ h2 {
 
 .documents-list li {
   display: grid;
-  grid-template-columns: minmax(160px, 1.4fr) minmax(120px, 0.8fr) minmax(90px, 0.5fr) minmax(80px, 0.5fr) minmax(90px, 0.5fr) minmax(160px, 0.8fr);
+  grid-template-columns: minmax(160px, 1.4fr) minmax(120px, 0.8fr) minmax(90px, 0.5fr) minmax(80px, 0.5fr) minmax(90px, 0.5fr) minmax(90px, 0.5fr) minmax(160px, 0.8fr);
   gap: 12px;
   align-items: center;
   padding: 12px 0;
@@ -205,6 +205,53 @@ h2 {
 .parse-status.empty,
 .parse-status.skipped {
   color: #8a5a00;
+}
+
+.link-button {
+  width: fit-content;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #4263eb;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  text-align: left;
+}
+
+.chunks-panel {
+  display: grid;
+  gap: 14px;
+  width: min(760px, 100%);
+  margin-top: 32px;
+  padding-top: 28px;
+  border-top: 1px solid #d8dee8;
+}
+
+.chunks-list {
+  display: grid;
+  gap: 14px;
+  margin: 0;
+  padding-left: 20px;
+}
+
+.chunks-list li {
+  padding: 12px 0;
+  border-top: 1px solid #e3e8ef;
+}
+
+.chunk-meta {
+  color: #4f5b67;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.chunks-list p {
+  margin: 8px 0 0;
+  color: #17202a;
+  font-size: 15px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 @media (max-width: 720px) {

@@ -7,18 +7,21 @@ type HealthState = {
   message: string;
 };
 
+type UploadedDocument = {
+  id: number;
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+  parse_status: string;
+  text_char_count: number;
+  parse_error: string | null;
+  chunk_count: number;
+};
+
 type UploadState = {
   status: "idle" | "loading" | "success" | "error";
   message: string;
-  document?: {
-    id: number;
-    filename: string;
-    content_type: string;
-    size_bytes: number;
-    parse_status: string;
-    text_char_count: number;
-    parse_error: string | null;
-  };
+  document?: UploadedDocument;
 };
 
 type DocumentRecord = {
@@ -29,7 +32,16 @@ type DocumentRecord = {
   parse_status: string;
   text_char_count: number;
   parse_error: string | null;
+  chunk_count: number;
   created_at: string;
+};
+
+type DocumentChunk = {
+  id: number;
+  document_id: number;
+  chunk_index: number;
+  content: string;
+  char_count: number;
 };
 
 export default function Home() {
@@ -45,6 +57,13 @@ export default function Home() {
   const [documents, setDocuments] = useState<DocumentRecord[]>([]);
   const [documentsMessage, setDocumentsMessage] = useState(
     "Document list has not been loaded yet."
+  );
+  const [selectedDocument, setSelectedDocument] = useState<DocumentRecord | null>(
+    null
+  );
+  const [chunks, setChunks] = useState<DocumentChunk[]>([]);
+  const [chunksMessage, setChunksMessage] = useState(
+    "Select a document to preview chunks."
   );
 
   useEffect(() => {
@@ -108,7 +127,7 @@ export default function Home() {
         throw new Error(`Upload failed with ${response.status}`);
       }
 
-      const data = (await response.json()) as UploadState["document"];
+      const data = (await response.json()) as UploadedDocument;
 
       setUpload({
         status: "success",
@@ -116,6 +135,7 @@ export default function Home() {
         document: data
       });
       await loadDocuments();
+      await loadChunks(data.id);
     } catch (error) {
       setUpload({
         status: "error",
@@ -149,10 +169,41 @@ export default function Home() {
     }
   }
 
+  async function loadChunks(documentId: number) {
+    setChunksMessage("Loading chunks...");
+
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:8000/documents/${documentId}/chunks`
+      );
+
+      if (!response.ok) {
+        throw new Error(`Chunk list failed with ${response.status}`);
+      }
+
+      const data = (await response.json()) as DocumentChunk[];
+      setChunks(data);
+      setChunksMessage(
+        data.length === 0
+          ? "No chunks stored for this document."
+          : `${data.length} chunk${data.length === 1 ? "" : "s"} stored.`
+      );
+    } catch (error) {
+      setChunksMessage(
+        error instanceof Error ? error.message : "Could not load chunks."
+      );
+    }
+  }
+
+  async function selectDocument(document: DocumentRecord) {
+    setSelectedDocument(document);
+    await loadChunks(document.id);
+  }
+
   return (
     <main className="shell">
       <section className="hero">
-        <p className="eyebrow">Day 4 PDF parsing</p>
+        <p className="eyebrow">Day 5 chunking</p>
         <h1>AI Learning Assistant</h1>
         <p className="summary">
           Upload learning materials, build a knowledge base, and ask questions
@@ -217,6 +268,10 @@ export default function Home() {
                 <dt>Text chars</dt>
                 <dd>{upload.document.text_char_count}</dd>
               </div>
+              <div>
+                <dt>Chunks</dt>
+                <dd>{upload.document.chunk_count}</dd>
+              </div>
               {upload.document.parse_error ? (
                 <div>
                   <dt>Parse error</dt>
@@ -245,10 +300,36 @@ export default function Home() {
                     {document.parse_status}
                   </span>
                   <span>{document.text_char_count} chars</span>
+                  <button
+                    className="link-button"
+                    onClick={() => void selectDocument(document)}
+                    type="button"
+                  >
+                    {document.chunk_count} chunks
+                  </button>
                   <span>{new Date(document.created_at).toLocaleString()}</span>
                 </li>
               ))}
             </ul>
+          ) : null}
+        </div>
+        <div className="chunks-panel">
+          <h2>
+            Chunk preview
+            {selectedDocument ? `: ${selectedDocument.filename}` : ""}
+          </h2>
+          <p className="health-message">{chunksMessage}</p>
+          {chunks.length > 0 ? (
+            <ol className="chunks-list">
+              {chunks.slice(0, 5).map((chunk) => (
+                <li key={chunk.id}>
+                  <div className="chunk-meta">
+                    Chunk {chunk.chunk_index + 1} · {chunk.char_count} chars
+                  </div>
+                  <p>{chunk.content.slice(0, 420)}</p>
+                </li>
+              ))}
+            </ol>
           ) : null}
         </div>
       </section>

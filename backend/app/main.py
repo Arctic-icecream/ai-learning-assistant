@@ -6,8 +6,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from .chunker import chunk_text
 from .database import Base, engine, get_db
-from .models import Document
+from .models import Document, DocumentChunk
 from .pdf_parser import extract_pdf_text
 
 app = FastAPI(title="AI Learning Assistant API")
@@ -97,6 +98,22 @@ async def upload_document(
     db.commit()
     db.refresh(document)
 
+    chunks = []
+    if document.parse_status == "parsed" and document.extracted_text:
+        chunks = chunk_text(document.extracted_text)
+        db.add_all(
+            [
+                DocumentChunk(
+                    document_id=document.id,
+                    chunk_index=index,
+                    content=chunk,
+                    char_count=len(chunk),
+                )
+                for index, chunk in enumerate(chunks)
+            ]
+        )
+        db.commit()
+
     return {
         "id": document.id,
         "filename": document.original_filename,
@@ -106,6 +123,7 @@ async def upload_document(
         "parse_status": document.parse_status,
         "text_char_count": document.text_char_count,
         "parse_error": document.parse_error,
+        "chunk_count": len(chunks),
     }
 
 
@@ -122,7 +140,33 @@ def list_documents(db: Session = Depends(get_db)) -> list[dict[str, object]]:
             "parse_status": document.parse_status,
             "text_char_count": document.text_char_count,
             "parse_error": document.parse_error,
+            "chunk_count": db.query(DocumentChunk)
+            .filter(DocumentChunk.document_id == document.id)
+            .count(),
             "created_at": document.created_at.isoformat(),
         }
         for document in documents
+    ]
+
+
+@app.get("/documents/{document_id}/chunks")
+def list_document_chunks(
+    document_id: int, db: Session = Depends(get_db)
+) -> list[dict[str, object]]:
+    chunks = (
+        db.query(DocumentChunk)
+        .filter(DocumentChunk.document_id == document_id)
+        .order_by(DocumentChunk.chunk_index.asc())
+        .all()
+    )
+
+    return [
+        {
+            "id": chunk.id,
+            "document_id": chunk.document_id,
+            "chunk_index": chunk.chunk_index,
+            "content": chunk.content,
+            "char_count": chunk.char_count,
+        }
+        for chunk in chunks
     ]
