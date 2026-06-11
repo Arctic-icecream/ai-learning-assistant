@@ -4,8 +4,44 @@ $Root = Resolve-Path (Join-Path $PSScriptRoot "..")
 $PidDir = Join-Path $Root ".dev-pids"
 $BackendPidFile = Join-Path $PidDir "backend.pid"
 $FrontendPidFile = Join-Path $PidDir "frontend.pid"
+$OllamaPidFile = Join-Path $PidDir "ollama.pid"
 
 New-Item -ItemType Directory -Force -Path $PidDir | Out-Null
+
+$OllamaPath = Join-Path $env:LOCALAPPDATA "Programs\Ollama\ollama.exe"
+if (-not (Test-Path $OllamaPath)) {
+  throw "Ollama was not found at $OllamaPath. Install Ollama before starting the app."
+}
+
+Write-Host "Checking Ollama..."
+$OllamaReady = $false
+try {
+  Invoke-RestMethod "http://127.0.0.1:11434/api/tags" | Out-Null
+  $OllamaReady = $true
+} catch {
+  Write-Host "Ollama is not running. Starting Ollama service..."
+  $OllamaProcess = Start-Process -FilePath $OllamaPath -ArgumentList @("serve") -PassThru
+  $OllamaProcess.Id | Set-Content -Path $OllamaPidFile
+
+  for ($Attempt = 1; $Attempt -le 30; $Attempt++) {
+    Start-Sleep -Seconds 2
+    try {
+      Invoke-RestMethod "http://127.0.0.1:11434/api/tags" | Out-Null
+      $OllamaReady = $true
+      break
+    } catch {
+    }
+  }
+}
+
+if (-not $OllamaReady) {
+  throw "Ollama did not become ready in time."
+}
+
+$OllamaModels = & $OllamaPath list
+if ($OllamaModels -notmatch "nomic-embed-text") {
+  throw "Ollama model nomic-embed-text is missing. Run: ollama pull nomic-embed-text"
+}
 
 Write-Host "Checking Docker Desktop..."
 $DockerReady = $false

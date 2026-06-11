@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from .chunker import chunk_text
 from .database import Base, engine, get_db
+from .embeddings import create_embedding
 from .models import Document, DocumentChunk
 from .pdf_parser import extract_pdf_text
 
@@ -27,8 +28,15 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 @app.on_event("startup")
 def create_tables() -> None:
+    ensure_vector_extension()
     Base.metadata.create_all(bind=engine)
     ensure_document_parse_columns()
+    ensure_chunk_embedding_columns()
+
+
+def ensure_vector_extension() -> None:
+    with engine.begin() as connection:
+        connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
 
 
 def ensure_document_parse_columns() -> None:
@@ -48,6 +56,21 @@ def ensure_document_parse_columns() -> None:
         )
         connection.execute(
             text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS parse_error TEXT")
+        )
+
+
+def ensure_chunk_embedding_columns() -> None:
+    with engine.begin() as connection:
+        connection.execute(
+            text("ALTER TABLE document_chunks ADD COLUMN IF NOT EXISTS embedding vector(768)")
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE document_chunks ADD COLUMN IF NOT EXISTS embedding_status VARCHAR(50) NOT NULL DEFAULT 'pending'"
+            )
+        )
+        connection.execute(
+            text("ALTER TABLE document_chunks ADD COLUMN IF NOT EXISTS embedding_error TEXT")
         )
 
 
@@ -99,19 +122,29 @@ async def upload_document(
     db.refresh(document)
 
     chunks = []
+    embedded_count = 0
     if document.parse_status == "parsed" and document.extracted_text:
         chunks = chunk_text(document.extracted_text)
-        db.add_all(
-            [
-                DocumentChunk(
-                    document_id=document.id,
-                    chunk_index=index,
-                    content=chunk,
-                    char_count=len(chunk),
-                )
-                for index, chunk in enumerate(chunks)
-            ]
-        )
+        chunk_records = []
+        for index, chunk in enumerate(chunks):
+            chunk_record = DocumentChunk(
+                document_id=document.id,
+                chunk_index=index,
+                content=chunk,
+                char_count=len(chunk),
+            )
+
+            try:
+                chunk_record.embedding = create_embedding(chunk)
+                chunk_record.embedding_status = "embedded"
+                embedded_count += 1
+            except Exception as error:
+                chunk_record.embedding_status = "failed"
+                chunk_record.embedding_error = str(error)
+
+            chunk_records.append(chunk_record)
+
+        db.add_all(chunk_records)
         db.commit()
 
     return {
@@ -124,6 +157,7 @@ async def upload_document(
         "text_char_count": document.text_char_count,
         "parse_error": document.parse_error,
         "chunk_count": len(chunks),
+        "embedded_count": embedded_count,
     }
 
 
@@ -142,6 +176,12 @@ def list_documents(db: Session = Depends(get_db)) -> list[dict[str, object]]:
             "parse_error": document.parse_error,
             "chunk_count": db.query(DocumentChunk)
             .filter(DocumentChunk.document_id == document.id)
+            .count(),
+            "embedded_count": db.query(DocumentChunk)
+            .filter(
+                DocumentChunk.document_id == document.id,
+                DocumentChunk.embedding_status == "embedded",
+            )
             .count(),
             "created_at": document.created_at.isoformat(),
         }
@@ -167,6 +207,8 @@ def list_document_chunks(
             "chunk_index": chunk.chunk_index,
             "content": chunk.content,
             "char_count": chunk.char_count,
+            "embedding_status": chunk.embedding_status,
+            "embedding_error": chunk.embedding_error,
         }
         for chunk in chunks
     ]

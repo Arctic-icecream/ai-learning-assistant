@@ -32,18 +32,19 @@ Clear uploaded development test data:
 .\reset-dev-data.cmd
 ```
 
-The start script opens Docker Desktop if needed, launches PostgreSQL with
-Docker Compose, then opens separate PowerShell windows for the FastAPI backend
-and Next.js frontend.
+The start script opens Ollama and Docker Desktop if needed, launches
+PostgreSQL with Docker Compose, then opens separate PowerShell windows for the
+FastAPI backend and Next.js frontend.
 The stop script shuts services down without deleting database data. The reset
 script clears the `documents` table and removes uploaded test files.
 
 If the frontend shows `Failed to fetch`, check that:
 
-1. Docker Desktop started successfully.
-2. `start-dev.cmd` started PostgreSQL successfully.
-3. The backend window shows `Application startup complete`.
-4. http://127.0.0.1:8000/health returns JSON.
+1. Ollama started successfully and has `nomic-embed-text`.
+2. Docker Desktop started successfully.
+3. `start-dev.cmd` started PostgreSQL successfully.
+4. The backend window shows `Application startup complete`.
+5. http://127.0.0.1:8000/health returns JSON.
 
 API checks:
 

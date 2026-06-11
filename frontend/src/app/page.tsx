@@ -16,6 +16,7 @@ type UploadedDocument = {
   text_char_count: number;
   parse_error: string | null;
   chunk_count: number;
+  embedded_count: number;
 };
 
 type UploadState = {
@@ -33,6 +34,7 @@ type DocumentRecord = {
   text_char_count: number;
   parse_error: string | null;
   chunk_count: number;
+  embedded_count: number;
   created_at: string;
 };
 
@@ -42,6 +44,8 @@ type DocumentChunk = {
   chunk_index: number;
   content: string;
   char_count: number;
+  embedding_status: string;
+  embedding_error: string | null;
 };
 
 export default function Home() {
@@ -203,7 +207,7 @@ export default function Home() {
   return (
     <main className="shell">
       <section className="hero">
-        <p className="eyebrow">Day 5 chunking</p>
+        <p className="eyebrow">Day 6 local embeddings</p>
         <h1>AI Learning Assistant</h1>
         <p className="summary">
           Upload learning materials, build a knowledge base, and ask questions
@@ -272,6 +276,12 @@ export default function Home() {
                 <dt>Chunks</dt>
                 <dd>{upload.document.chunk_count}</dd>
               </div>
+              <div>
+                <dt>Embedded</dt>
+                <dd>
+                  {upload.document.embedded_count} / {upload.document.chunk_count}
+                </dd>
+              </div>
               {upload.document.parse_error ? (
                 <div>
                   <dt>Parse error</dt>
@@ -307,6 +317,9 @@ export default function Home() {
                   >
                     {document.chunk_count} chunks
                   </button>
+                  <span className="embedding-count">
+                    {document.embedded_count} embedded
+                  </span>
                   <span>{new Date(document.created_at).toLocaleString()}</span>
                 </li>
               ))}
@@ -324,8 +337,14 @@ export default function Home() {
               {chunks.slice(0, 5).map((chunk) => (
                 <li key={chunk.id}>
                   <div className="chunk-meta">
-                    Chunk {chunk.chunk_index + 1} · {chunk.char_count} chars
+                    Chunk {chunk.chunk_index + 1} · {chunk.char_count} chars ·{" "}
+                    <span className={`embedding-status ${chunk.embedding_status}`}>
+                      {chunk.embedding_status}
+                    </span>
                   </div>
+                  {chunk.embedding_error ? (
+                    <p className="chunk-error">{chunk.embedding_error}</p>
+                  ) : null}
                   <p>{chunk.content.slice(0, 420)}</p>
                 </li>
               ))}

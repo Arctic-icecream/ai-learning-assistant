@@ -5,6 +5,7 @@ $PidDir = Join-Path $Root ".dev-pids"
 $PidFiles = @(
   Join-Path $PidDir "backend.pid"
   Join-Path $PidDir "frontend.pid"
+  Join-Path $PidDir "ollama.pid"
 )
 
 foreach ($PidFile in $PidFiles) {
@@ -36,4 +37,3 @@ Remove-Item $PidDir -Recurse -Force -ErrorAction SilentlyContinue
 
 Write-Host ""
 Write-Host "Development stack stopped."
-
