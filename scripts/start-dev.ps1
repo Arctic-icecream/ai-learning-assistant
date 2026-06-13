@@ -42,6 +42,9 @@ $OllamaModels = & $OllamaPath list
 if ($OllamaModels -notmatch "nomic-embed-text") {
   throw "Ollama model nomic-embed-text is missing. Run: ollama pull nomic-embed-text"
 }
+if ($OllamaModels -notmatch "qwen3-coder:30b") {
+  throw "Ollama model qwen3-coder:30b is missing. Run: ollama pull qwen3-coder:30b"
+}
 
 Write-Host "Checking Docker Desktop..."
 $DockerReady = $false

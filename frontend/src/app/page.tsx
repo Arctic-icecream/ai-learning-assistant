@@ -48,6 +48,23 @@ type DocumentChunk = {
   embedding_error: string | null;
 };
 
+type SearchResult = {
+  chunk_id: number;
+  document_id: number;
+  filename: string;
+  chunk_index: number;
+  content: string;
+  char_count: number;
+  distance: number;
+};
+
+type AnswerState = {
+  status: "idle" | "loading" | "success" | "error";
+  message: string;
+  answer: string;
+  sources: SearchResult[];
+};
+
 export default function Home() {
   const [health, setHealth] = useState<HealthState>({
     status: "idle",
@@ -69,6 +86,17 @@ export default function Home() {
   const [chunksMessage, setChunksMessage] = useState(
     "Select a document to preview chunks."
   );
+  const [query, setQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [searchMessage, setSearchMessage] = useState(
+    "Search your uploaded materials."
+  );
+  const [answer, setAnswer] = useState<AnswerState>({
+    status: "idle",
+    message: "Generate an answer after entering a question.",
+    answer: "",
+    sources: []
+  });
 
   useEffect(() => {
     void loadDocuments();
@@ -204,10 +232,99 @@ export default function Home() {
     await loadChunks(document.id);
   }
 
+  async function searchChunks() {
+    if (!query.trim()) {
+      setSearchMessage("Please enter a question first.");
+      return;
+    }
+
+    setSearchMessage("Searching embedded chunks...");
+
+    try {
+      const response = await fetch("http://127.0.0.1:8000/search", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ query, top_k: 5 })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Search failed with ${response.status}`);
+      }
+
+      const data = (await response.json()) as SearchResult[];
+      setSearchResults(data);
+      setSearchMessage(
+        data.length === 0
+          ? "No embedded chunks were found."
+          : `${data.length} relevant chunk${data.length === 1 ? "" : "s"} found.`
+      );
+    } catch (error) {
+      setSearchMessage(
+        error instanceof Error ? error.message : "Could not search chunks."
+      );
+    }
+  }
+
+  async function generateRagAnswer() {
+    if (!query.trim()) {
+      setAnswer({
+        status: "error",
+        message: "Please enter a question first.",
+        answer: "",
+        sources: []
+      });
+      return;
+    }
+
+    setAnswer({
+      status: "loading",
+      message: "Generating an answer from retrieved chunks...",
+      answer: "",
+      sources: []
+    });
+
+    try {
+      const response = await fetch("http://127.0.0.1:8000/answer", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ query, top_k: 5 })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Answer failed with ${response.status}`);
+      }
+
+      const data = (await response.json()) as {
+        answer: string;
+        sources: SearchResult[];
+      };
+
+      setAnswer({
+        status: "success",
+        message: `${data.sources.length} source chunk${data.sources.length === 1 ? "" : "s"} used.`,
+        answer: data.answer,
+        sources: data.sources
+      });
+      setSearchResults(data.sources);
+    } catch (error) {
+      setAnswer({
+        status: "error",
+        message:
+          error instanceof Error ? error.message : "Could not generate answer.",
+        answer: "",
+        sources: []
+      });
+    }
+  }
+
   return (
     <main className="shell">
       <section className="hero">
-        <p className="eyebrow">Day 6 local embeddings</p>
+        <p className="eyebrow">Day 7 semantic search</p>
         <h1>AI Learning Assistant</h1>
         <p className="summary">
           Upload learning materials, build a knowledge base, and ask questions
@@ -346,6 +463,50 @@ export default function Home() {
                     <p className="chunk-error">{chunk.embedding_error}</p>
                   ) : null}
                   <p>{chunk.content.slice(0, 420)}</p>
+                </li>
+              ))}
+            </ol>
+          ) : null}
+        </div>
+        <div className="search-panel">
+          <h2>Ask your materials</h2>
+          <textarea
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Explain Bell-LaPadula in simple words"
+            value={query}
+          />
+          <div className="search-actions">
+            <button className="primary-button" onClick={searchChunks} type="button">
+              Search Chunks
+            </button>
+            <button
+              className="secondary-button"
+              disabled={answer.status === "loading"}
+              onClick={generateRagAnswer}
+              type="button"
+            >
+              {answer.status === "loading" ? "Generating..." : "Generate Answer"}
+            </button>
+          </div>
+          <p className="health-message">{searchMessage}</p>
+          {answer.answer ? (
+            <div className="answer-box">
+              <h3>Local RAG answer</h3>
+              <p className={`health-message ${answer.status}`}>{answer.message}</p>
+              <p>{answer.answer}</p>
+            </div>
+          ) : (
+            <p className={`health-message ${answer.status}`}>{answer.message}</p>
+          )}
+          {searchResults.length > 0 ? (
+            <ol className="search-results">
+              {searchResults.map((result) => (
+                <li key={result.chunk_id}>
+                  <div className="chunk-meta">
+                    {result.filename} - chunk {result.chunk_index + 1} -
+                    distance {result.distance.toFixed(4)}
+                  </div>
+                  <p>{result.content.slice(0, 600)}</p>
                 </li>
               ))}
             </ol>

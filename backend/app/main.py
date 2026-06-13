@@ -3,12 +3,14 @@ from uuid import uuid4
 
 from fastapi import Depends, FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from .chunker import chunk_text
 from .database import Base, engine, get_db
 from .embeddings import create_embedding
+from .llm import generate_answer
 from .models import Document, DocumentChunk
 from .pdf_parser import extract_pdf_text
 
@@ -24,6 +26,20 @@ app.add_middleware(
 
 UPLOAD_DIR = Path(__file__).resolve().parents[1] / "storage" / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+
+class SearchRequest(BaseModel):
+    query: str = Field(min_length=1)
+    top_k: int = Field(default=5, ge=1, le=10)
+
+
+class AnswerRequest(BaseModel):
+    query: str = Field(min_length=1)
+    top_k: int = Field(default=5, ge=1, le=10)
+
+
+def vector_literal(vector: list[float]) -> str:
+    return "[" + ",".join(str(value) for value in vector) + "]"
 
 
 @app.on_event("startup")
@@ -212,3 +228,68 @@ def list_document_chunks(
         }
         for chunk in chunks
     ]
+
+
+def semantic_search(
+    query: str, top_k: int, db: Session
+) -> list[dict[str, object]]:
+    query_embedding = create_embedding(query)
+    query_vector = vector_literal(query_embedding)
+
+    rows = db.execute(
+        text(
+            """
+            SELECT
+                dc.id,
+                dc.document_id,
+                d.original_filename,
+                dc.chunk_index,
+                dc.content,
+                dc.char_count,
+                dc.embedding <=> (:query_vector)::vector AS distance
+            FROM document_chunks dc
+            JOIN documents d ON d.id = dc.document_id
+            WHERE dc.embedding IS NOT NULL
+            ORDER BY dc.embedding <=> (:query_vector)::vector
+            LIMIT :top_k
+            """
+        ),
+        {"query_vector": query_vector, "top_k": top_k},
+    ).mappings()
+
+    return [
+        {
+            "chunk_id": row["id"],
+            "document_id": row["document_id"],
+            "filename": row["original_filename"],
+            "chunk_index": row["chunk_index"],
+            "content": row["content"],
+            "char_count": row["char_count"],
+            "distance": float(row["distance"]),
+        }
+        for row in rows
+    ]
+
+
+@app.post("/search")
+def search_documents(
+    request: SearchRequest, db: Session = Depends(get_db)
+) -> list[dict[str, object]]:
+    return semantic_search(request.query, request.top_k, db)
+
+
+@app.post("/answer")
+def answer_question(
+    request: AnswerRequest, db: Session = Depends(get_db)
+) -> dict[str, object]:
+    results = semantic_search(request.query, request.top_k, db)
+    context = "\n\n".join(
+        f"Source {index + 1}: {result['filename']}, chunk {int(result['chunk_index']) + 1}\n{result['content']}"
+        for index, result in enumerate(results)
+    )
+    answer = generate_answer(request.query, context)
+
+    return {
+        "answer": answer,
+        "sources": results,
+    }

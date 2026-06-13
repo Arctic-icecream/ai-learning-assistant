@@ -40,7 +40,7 @@ script clears the `documents` table and removes uploaded test files.
 
 If the frontend shows `Failed to fetch`, check that:
 
-1. Ollama started successfully and has `nomic-embed-text`.
+1. Ollama started successfully and has `nomic-embed-text` and `qwen3-coder:30b`.
 2. Docker Desktop started successfully.
 3. `start-dev.cmd` started PostgreSQL successfully.
 4. The backend window shows `Application startup complete`.
