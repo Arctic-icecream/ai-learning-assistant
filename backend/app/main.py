@@ -1,7 +1,7 @@
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, File, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy import text
@@ -40,6 +40,86 @@ class AnswerRequest(BaseModel):
 
 def vector_literal(vector: list[float]) -> str:
     return "[" + ",".join(str(value) for value in vector) + "]"
+
+
+def document_response(document: Document, db: Session) -> dict[str, object]:
+    chunk_count = (
+        db.query(DocumentChunk).filter(DocumentChunk.document_id == document.id).count()
+    )
+    embedded_count = (
+        db.query(DocumentChunk)
+        .filter(
+            DocumentChunk.document_id == document.id,
+            DocumentChunk.embedding_status == "embedded",
+        )
+        .count()
+    )
+
+    return {
+        "id": document.id,
+        "filename": document.original_filename,
+        "content_type": document.content_type,
+        "size_bytes": document.size_bytes,
+        "storage_path": document.storage_path,
+        "parse_status": document.parse_status,
+        "text_char_count": document.text_char_count,
+        "parse_error": document.parse_error,
+        "chunk_count": chunk_count,
+        "embedded_count": embedded_count,
+        "created_at": document.created_at.isoformat(),
+    }
+
+
+def process_document(document: Document, db: Session) -> None:
+    db.query(DocumentChunk).filter(DocumentChunk.document_id == document.id).delete()
+
+    document.parse_status = "skipped"
+    document.parse_error = None
+    document.extracted_text = None
+    document.text_char_count = 0
+
+    storage_path = Path(document.storage_path)
+    is_pdf = (
+        document.content_type == "application/pdf"
+        or document.original_filename.lower().endswith(".pdf")
+    )
+
+    if is_pdf:
+        try:
+            document.extracted_text = extract_pdf_text(storage_path)
+            document.text_char_count = len(document.extracted_text)
+            document.parse_status = "parsed" if document.extracted_text else "empty"
+        except Exception as error:
+            document.parse_status = "failed"
+            document.parse_error = str(error)
+
+    db.add(document)
+    db.commit()
+    db.refresh(document)
+
+    if document.parse_status != "parsed" or not document.extracted_text:
+        return
+
+    chunk_records = []
+    for index, chunk in enumerate(chunk_text(document.extracted_text)):
+        chunk_record = DocumentChunk(
+            document_id=document.id,
+            chunk_index=index,
+            content=chunk,
+            char_count=len(chunk),
+        )
+
+        try:
+            chunk_record.embedding = create_embedding(chunk)
+            chunk_record.embedding_status = "embedded"
+        except Exception as error:
+            chunk_record.embedding_status = "failed"
+            chunk_record.embedding_error = str(error)
+
+        chunk_records.append(chunk_record)
+
+    db.add_all(chunk_records)
+    db.commit()
 
 
 @app.on_event("startup")
@@ -107,74 +187,37 @@ async def upload_document(
     storage_path.write_bytes(file_bytes)
     content_type = file.content_type or "application/octet-stream"
 
-    parse_status = "skipped"
-    parse_error = None
-    extracted_text = None
-    text_char_count = 0
-
-    if content_type == "application/pdf" or original_filename.lower().endswith(".pdf"):
-        try:
-            extracted_text = extract_pdf_text(storage_path)
-            text_char_count = len(extracted_text)
-            parse_status = "parsed" if extracted_text else "empty"
-        except Exception as error:
-            parse_status = "failed"
-            parse_error = str(error)
-
     document = Document(
         original_filename=original_filename,
         stored_filename=stored_filename,
         content_type=content_type,
         size_bytes=len(file_bytes),
         storage_path=str(storage_path),
-        extracted_text=extracted_text,
-        text_char_count=text_char_count,
-        parse_status=parse_status,
-        parse_error=parse_error,
     )
 
     db.add(document)
     db.commit()
     db.refresh(document)
+    process_document(document, db)
 
-    chunks = []
-    embedded_count = 0
-    if document.parse_status == "parsed" and document.extracted_text:
-        chunks = chunk_text(document.extracted_text)
-        chunk_records = []
-        for index, chunk in enumerate(chunks):
-            chunk_record = DocumentChunk(
-                document_id=document.id,
-                chunk_index=index,
-                content=chunk,
-                char_count=len(chunk),
-            )
+    return document_response(document, db)
 
-            try:
-                chunk_record.embedding = create_embedding(chunk)
-                chunk_record.embedding_status = "embedded"
-                embedded_count += 1
-            except Exception as error:
-                chunk_record.embedding_status = "failed"
-                chunk_record.embedding_error = str(error)
 
-            chunk_records.append(chunk_record)
+@app.post("/documents/{document_id}/reprocess")
+def reprocess_document(
+    document_id: int, db: Session = Depends(get_db)
+) -> dict[str, object]:
+    document = db.get(Document, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found")
 
-        db.add_all(chunk_records)
-        db.commit()
+    if not Path(document.storage_path).exists():
+        raise HTTPException(status_code=404, detail="Stored file not found")
 
-    return {
-        "id": document.id,
-        "filename": document.original_filename,
-        "content_type": document.content_type,
-        "size_bytes": document.size_bytes,
-        "storage_path": document.storage_path,
-        "parse_status": document.parse_status,
-        "text_char_count": document.text_char_count,
-        "parse_error": document.parse_error,
-        "chunk_count": len(chunks),
-        "embedded_count": embedded_count,
-    }
+    process_document(document, db)
+    db.refresh(document)
+
+    return document_response(document, db)
 
 
 @app.get("/documents")
@@ -182,25 +225,7 @@ def list_documents(db: Session = Depends(get_db)) -> list[dict[str, object]]:
     documents = db.query(Document).order_by(Document.created_at.desc()).all()
 
     return [
-        {
-            "id": document.id,
-            "filename": document.original_filename,
-            "content_type": document.content_type,
-            "size_bytes": document.size_bytes,
-            "parse_status": document.parse_status,
-            "text_char_count": document.text_char_count,
-            "parse_error": document.parse_error,
-            "chunk_count": db.query(DocumentChunk)
-            .filter(DocumentChunk.document_id == document.id)
-            .count(),
-            "embedded_count": db.query(DocumentChunk)
-            .filter(
-                DocumentChunk.document_id == document.id,
-                DocumentChunk.embedding_status == "embedded",
-            )
-            .count(),
-            "created_at": document.created_at.isoformat(),
-        }
+        document_response(document, db)
         for document in documents
     ]
 

@@ -79,6 +79,7 @@ export default function Home() {
   const [documentsMessage, setDocumentsMessage] = useState(
     "Document list has not been loaded yet."
   );
+  const [reprocessingId, setReprocessingId] = useState<number | null>(null);
   const [selectedDocument, setSelectedDocument] = useState<DocumentRecord | null>(
     null
   );
@@ -230,6 +231,35 @@ export default function Home() {
   async function selectDocument(document: DocumentRecord) {
     setSelectedDocument(document);
     await loadChunks(document.id);
+  }
+
+  async function reprocessDocument(document: DocumentRecord) {
+    setReprocessingId(document.id);
+    setDocumentsMessage(`Reprocessing ${document.filename}...`);
+
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:8000/documents/${document.id}/reprocess`,
+        {
+          method: "POST"
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(`Reprocess failed with ${response.status}`);
+      }
+
+      const updatedDocument = (await response.json()) as DocumentRecord;
+      setSelectedDocument(updatedDocument);
+      await loadDocuments();
+      await loadChunks(updatedDocument.id);
+    } catch (error) {
+      setDocumentsMessage(
+        error instanceof Error ? error.message : "Could not reprocess document."
+      );
+    } finally {
+      setReprocessingId(null);
+    }
   }
 
   async function searchChunks() {
@@ -437,6 +467,14 @@ export default function Home() {
                   <span className="embedding-count">
                     {document.embedded_count} embedded
                   </span>
+                  <button
+                    className="secondary-button compact-button"
+                    disabled={reprocessingId === document.id}
+                    onClick={() => void reprocessDocument(document)}
+                    type="button"
+                  >
+                    {reprocessingId === document.id ? "Working..." : "Reprocess"}
+                  </button>
                   <span>{new Date(document.created_at).toLocaleString()}</span>
                 </li>
               ))}
@@ -494,6 +532,21 @@ export default function Home() {
               <h3>Local RAG answer</h3>
               <p className={`health-message ${answer.status}`}>{answer.message}</p>
               <p>{answer.answer}</p>
+              {answer.sources.length > 0 ? (
+                <div className="sources-box">
+                  <h4>Sources used</h4>
+                  <ol>
+                    {answer.sources.map((source, index) => (
+                      <li key={source.chunk_id}>
+                        <strong>Source {index + 1}</strong>: {source.filename},
+                        chunk {source.chunk_index + 1}, distance{" "}
+                        {source.distance.toFixed(4)}
+                        <p>{source.content.slice(0, 360)}</p>
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              ) : null}
             </div>
           ) : (
             <p className={`health-message ${answer.status}`}>{answer.message}</p>

@@ -11,6 +11,7 @@ def generate_answer(question: str, context: str) -> str:
     prompt = f"""You are an AI learning assistant. Answer the question using only the provided context.
 
 If the context does not contain enough information, say that the uploaded material does not provide enough information.
+When you use information from the context, cite it with source labels like [Source 1] or [Source 2].
 
 Context:
 {context}
@@ -31,4 +32,3 @@ Answer:"""
     )
     response.raise_for_status()
     return response.json()["response"].strip()
-
