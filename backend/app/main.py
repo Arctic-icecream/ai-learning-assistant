@@ -10,8 +10,8 @@ from sqlalchemy.orm import Session
 from .chunker import chunk_text
 from .database import Base, engine, get_db
 from .embeddings import create_embedding
-from .llm import generate_answer
-from .models import Document, DocumentChunk
+from .llm import generate_answer, generate_flashcards
+from .models import Document, DocumentChunk, Flashcard
 from .pdf_parser import extract_pdf_text
 
 app = FastAPI(title="AI Learning Assistant API")
@@ -36,6 +36,10 @@ class SearchRequest(BaseModel):
 class AnswerRequest(BaseModel):
     query: str = Field(min_length=1)
     top_k: int = Field(default=5, ge=1, le=10)
+
+
+class FlashcardGenerateRequest(BaseModel):
+    count: int = Field(default=10, ge=1, le=20)
 
 
 def vector_literal(vector: list[float]) -> str:
@@ -72,6 +76,7 @@ def document_response(document: Document, db: Session) -> dict[str, object]:
 
 def process_document(document: Document, db: Session) -> None:
     db.query(DocumentChunk).filter(DocumentChunk.document_id == document.id).delete()
+    db.query(Flashcard).filter(Flashcard.document_id == document.id).delete()
 
     document.parse_status = "skipped"
     document.parse_error = None
@@ -253,6 +258,75 @@ def list_document_chunks(
         }
         for chunk in chunks
     ]
+
+
+def flashcard_response(card: Flashcard) -> dict[str, object]:
+    return {
+        "id": card.id,
+        "document_id": card.document_id,
+        "question": card.question,
+        "answer": card.answer,
+        "source_chunk_index": card.source_chunk_index,
+        "created_at": card.created_at.isoformat(),
+    }
+
+
+@app.get("/documents/{document_id}/flashcards")
+def list_flashcards(
+    document_id: int, db: Session = Depends(get_db)
+) -> list[dict[str, object]]:
+    cards = (
+        db.query(Flashcard)
+        .filter(Flashcard.document_id == document_id)
+        .order_by(Flashcard.id.asc())
+        .all()
+    )
+
+    return [flashcard_response(card) for card in cards]
+
+
+@app.post("/documents/{document_id}/flashcards/generate")
+def generate_document_flashcards(
+    document_id: int,
+    request: FlashcardGenerateRequest,
+    db: Session = Depends(get_db),
+) -> list[dict[str, object]]:
+    document = db.get(Document, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    chunks = (
+        db.query(DocumentChunk)
+        .filter(DocumentChunk.document_id == document_id)
+        .order_by(DocumentChunk.chunk_index.asc())
+        .limit(8)
+        .all()
+    )
+    if not chunks:
+        raise HTTPException(status_code=400, detail="Document has no chunks")
+
+    context = "\n\n".join(
+        f"Chunk {chunk.chunk_index + 1}:\n{chunk.content}" for chunk in chunks
+    )
+    generated_cards = generate_flashcards(context, request.count)
+
+    db.query(Flashcard).filter(Flashcard.document_id == document_id).delete()
+    card_records = [
+        Flashcard(
+            document_id=document_id,
+            question=card["question"],
+            answer=card["answer"],
+            source_chunk_index=None,
+        )
+        for card in generated_cards
+    ]
+    db.add_all(card_records)
+    db.commit()
+
+    for card in card_records:
+        db.refresh(card)
+
+    return [flashcard_response(card) for card in card_records]
 
 
 def semantic_search(

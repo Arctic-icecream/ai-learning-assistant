@@ -186,7 +186,7 @@ h2 {
 
 .documents-list li {
   display: grid;
-  grid-template-columns: minmax(160px, 1.4fr) minmax(120px, 0.8fr) minmax(90px, 0.5fr) minmax(80px, 0.5fr) minmax(90px, 0.5fr) minmax(100px, 0.5fr) minmax(110px, 0.5fr) minmax(100px, 0.5fr) minmax(160px, 0.8fr);
+  grid-template-columns: minmax(160px, 1.4fr) minmax(120px, 0.8fr) minmax(90px, 0.5fr) minmax(80px, 0.5fr) minmax(90px, 0.5fr) minmax(100px, 0.5fr) minmax(110px, 0.5fr) minmax(100px, 0.5fr) minmax(120px, 0.6fr) minmax(60px, 0.3fr) minmax(160px, 0.8fr);
   gap: 12px;
   align-items: center;
   padding: 12px 0;
@@ -382,6 +382,42 @@ h2 {
   color: #17202a;
   line-height: 1.5;
   overflow-wrap: anywhere;
+}
+
+.flashcards-panel {
+  display: grid;
+  gap: 14px;
+  width: min(760px, 100%);
+  margin-top: 32px;
+  padding-top: 28px;
+  border-top: 1px solid #d8dee8;
+}
+
+.flashcards-list {
+  display: grid;
+  gap: 14px;
+  margin: 0;
+  padding-left: 20px;
+}
+
+.flashcards-list li {
+  padding: 16px;
+  border: 1px solid #c7d0dd;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.flashcards-list h3 {
+  margin: 0;
+  color: #17202a;
+  font-size: 17px;
+}
+
+.flashcards-list p {
+  margin: 10px 0 0;
+  color: #4f5b67;
+  line-height: 1.5;
+  white-space: pre-wrap;
 }
 
 @media (max-width: 720px) {

@@ -65,6 +65,15 @@ type AnswerState = {
   sources: SearchResult[];
 };
 
+type Flashcard = {
+  id: number;
+  document_id: number;
+  question: string;
+  answer: string;
+  source_chunk_index: number | null;
+  created_at: string;
+};
+
 export default function Home() {
   const [health, setHealth] = useState<HealthState>({
     status: "idle",
@@ -98,6 +107,13 @@ export default function Home() {
     answer: "",
     sources: []
   });
+  const [flashcards, setFlashcards] = useState<Flashcard[]>([]);
+  const [flashcardsMessage, setFlashcardsMessage] = useState(
+    "Select a document to view flashcards."
+  );
+  const [flashcardDocument, setFlashcardDocument] =
+    useState<DocumentRecord | null>(null);
+  const [generatingCardsId, setGeneratingCardsId] = useState<number | null>(null);
 
   useEffect(() => {
     void loadDocuments();
@@ -231,6 +247,7 @@ export default function Home() {
   async function selectDocument(document: DocumentRecord) {
     setSelectedDocument(document);
     await loadChunks(document.id);
+    await loadFlashcards(document);
   }
 
   async function reprocessDocument(document: DocumentRecord) {
@@ -251,6 +268,9 @@ export default function Home() {
 
       const updatedDocument = (await response.json()) as DocumentRecord;
       setSelectedDocument(updatedDocument);
+      setFlashcardDocument(updatedDocument);
+      setFlashcards([]);
+      setFlashcardsMessage("Flashcards were cleared because the document was reprocessed.");
       await loadDocuments();
       await loadChunks(updatedDocument.id);
     } catch (error) {
@@ -294,6 +314,66 @@ export default function Home() {
       setSearchMessage(
         error instanceof Error ? error.message : "Could not search chunks."
       );
+    }
+  }
+
+  async function loadFlashcards(document: DocumentRecord) {
+    setFlashcardDocument(document);
+    setFlashcardsMessage("Loading flashcards...");
+
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:8000/documents/${document.id}/flashcards`
+      );
+
+      if (!response.ok) {
+        throw new Error(`Flashcard list failed with ${response.status}`);
+      }
+
+      const data = (await response.json()) as Flashcard[];
+      setFlashcards(data);
+      setFlashcardsMessage(
+        data.length === 0
+          ? "No flashcards generated for this document yet."
+          : `${data.length} flashcard${data.length === 1 ? "" : "s"} ready.`
+      );
+    } catch (error) {
+      setFlashcardsMessage(
+        error instanceof Error ? error.message : "Could not load flashcards."
+      );
+    }
+  }
+
+  async function generateFlashcards(document: DocumentRecord) {
+    setGeneratingCardsId(document.id);
+    setFlashcardDocument(document);
+    setFlashcardsMessage(`Generating flashcards for ${document.filename}...`);
+
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:8000/documents/${document.id}/flashcards/generate`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ count: 10 })
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(`Flashcard generation failed with ${response.status}`);
+      }
+
+      const data = (await response.json()) as Flashcard[];
+      setFlashcards(data);
+      setFlashcardsMessage(`${data.length} flashcards generated.`);
+    } catch (error) {
+      setFlashcardsMessage(
+        error instanceof Error ? error.message : "Could not generate flashcards."
+      );
+    } finally {
+      setGeneratingCardsId(null);
     }
   }
 
@@ -354,7 +434,7 @@ export default function Home() {
   return (
     <main className="shell">
       <section className="hero">
-        <p className="eyebrow">Day 7 semantic search</p>
+        <p className="eyebrow">Day 9 flashcards</p>
         <h1>AI Learning Assistant</h1>
         <p className="summary">
           Upload learning materials, build a knowledge base, and ask questions
@@ -475,6 +555,21 @@ export default function Home() {
                   >
                     {reprocessingId === document.id ? "Working..." : "Reprocess"}
                   </button>
+                  <button
+                    className="secondary-button compact-button"
+                    disabled={generatingCardsId === document.id}
+                    onClick={() => void generateFlashcards(document)}
+                    type="button"
+                  >
+                    {generatingCardsId === document.id ? "Working..." : "Generate Cards"}
+                  </button>
+                  <button
+                    className="link-button"
+                    onClick={() => void loadFlashcards(document)}
+                    type="button"
+                  >
+                    Cards
+                  </button>
                   <span>{new Date(document.created_at).toLocaleString()}</span>
                 </li>
               ))}
@@ -560,6 +655,23 @@ export default function Home() {
                     distance {result.distance.toFixed(4)}
                   </div>
                   <p>{result.content.slice(0, 600)}</p>
+                </li>
+              ))}
+            </ol>
+          ) : null}
+        </div>
+        <div className="flashcards-panel">
+          <h2>
+            Flashcards
+            {flashcardDocument ? `: ${flashcardDocument.filename}` : ""}
+          </h2>
+          <p className="health-message">{flashcardsMessage}</p>
+          {flashcards.length > 0 ? (
+            <ol className="flashcards-list">
+              {flashcards.map((card) => (
+                <li key={card.id}>
+                  <h3>{card.question}</h3>
+                  <p>{card.answer}</p>
                 </li>
               ))}
             </ol>
