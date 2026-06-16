@@ -114,6 +114,7 @@ export default function Home() {
   const [flashcardDocument, setFlashcardDocument] =
     useState<DocumentRecord | null>(null);
   const [generatingCardsId, setGeneratingCardsId] = useState<number | null>(null);
+  const [flippedCardIds, setFlippedCardIds] = useState<number[]>([]);
 
   useEffect(() => {
     void loadDocuments();
@@ -332,6 +333,7 @@ export default function Home() {
 
       const data = (await response.json()) as Flashcard[];
       setFlashcards(data);
+      setFlippedCardIds([]);
       setFlashcardsMessage(
         data.length === 0
           ? "No flashcards generated for this document yet."
@@ -367,6 +369,7 @@ export default function Home() {
 
       const data = (await response.json()) as Flashcard[];
       setFlashcards(data);
+      setFlippedCardIds([]);
       setFlashcardsMessage(`${data.length} flashcards generated.`);
     } catch (error) {
       setFlashcardsMessage(
@@ -429,6 +432,23 @@ export default function Home() {
         sources: []
       });
     }
+  }
+
+  function toggleFlashcard(cardId: number) {
+    setFlippedCardIds((currentIds) =>
+      currentIds.includes(cardId)
+        ? currentIds.filter((id) => id !== cardId)
+        : [...currentIds, cardId]
+    );
+  }
+
+  function exportAnkiCsv() {
+    if (!flashcardDocument) {
+      setFlashcardsMessage("Select a document before exporting flashcards.");
+      return;
+    }
+
+    window.location.href = `http://127.0.0.1:8000/documents/${flashcardDocument.id}/flashcards/export`;
   }
 
   return (
@@ -661,17 +681,39 @@ export default function Home() {
           ) : null}
         </div>
         <div className="flashcards-panel">
-          <h2>
-            Flashcards
-            {flashcardDocument ? `: ${flashcardDocument.filename}` : ""}
-          </h2>
+          <div className="flashcards-heading">
+            <h2>
+              Flashcards
+              {flashcardDocument ? `: ${flashcardDocument.filename}` : ""}
+            </h2>
+            <button
+              className="secondary-button"
+              disabled={flashcards.length === 0}
+              onClick={exportAnkiCsv}
+              type="button"
+            >
+              Export Anki CSV
+            </button>
+          </div>
           <p className="health-message">{flashcardsMessage}</p>
           {flashcards.length > 0 ? (
             <ol className="flashcards-list">
               {flashcards.map((card) => (
                 <li key={card.id}>
-                  <h3>{card.question}</h3>
-                  <p>{card.answer}</p>
+                  <button
+                    className={`flashcard ${flippedCardIds.includes(card.id) ? "flipped" : ""}`}
+                    onClick={() => toggleFlashcard(card.id)}
+                    type="button"
+                  >
+                    <span className="flashcard-label">
+                      {flippedCardIds.includes(card.id) ? "Answer" : "Question"}
+                    </span>
+                    <span className="flashcard-content">
+                      {flippedCardIds.includes(card.id)
+                        ? card.answer
+                        : card.question}
+                    </span>
+                  </button>
                 </li>
               ))}
             </ol>

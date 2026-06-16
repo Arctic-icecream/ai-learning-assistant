@@ -1,8 +1,11 @@
 from pathlib import Path
+import csv
+import io
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -283,6 +286,42 @@ def list_flashcards(
     )
 
     return [flashcard_response(card) for card in cards]
+
+
+@app.get("/documents/{document_id}/flashcards/export")
+def export_flashcards(
+    document_id: int, db: Session = Depends(get_db)
+) -> StreamingResponse:
+    document = db.get(Document, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    cards = (
+        db.query(Flashcard)
+        .filter(Flashcard.document_id == document_id)
+        .order_by(Flashcard.id.asc())
+        .all()
+    )
+    if not cards:
+        raise HTTPException(status_code=400, detail="Document has no flashcards")
+
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(["Question", "Answer"])
+    for card in cards:
+        writer.writerow([card.question, card.answer])
+
+    safe_name = "".join(
+        character if character.isalnum() or character in ("-", "_") else "_"
+        for character in Path(document.original_filename).stem
+    )
+    filename = f"{safe_name or 'flashcards'}-anki.csv"
+
+    return StreamingResponse(
+        iter([buffer.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.post("/documents/{document_id}/flashcards/generate")
