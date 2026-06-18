@@ -90,3 +90,72 @@ JSON array:"""
         raise ValueError("No valid flashcards were generated")
 
     return normalized_cards
+
+
+def generate_quiz_questions(context: str, count: int) -> list[dict[str, object]]:
+    prompt = f"""Create {count} exam-style questions from the provided course material.
+
+Return only a JSON array. Do not include markdown or commentary.
+
+Use a mix of question types:
+- "multiple_choice"
+- "short_answer"
+- "true_false"
+
+Each item must have:
+- "question_type": one of the three types above
+- "question": the exam question
+- "choices": an array of answer choices for multiple_choice or true_false, otherwise []
+- "correct_answer": the correct answer
+- "explanation": a short explanation grounded in the material
+
+Course material:
+{context}
+
+JSON array:"""
+
+    response = httpx.post(
+        f"{OLLAMA_URL}/api/generate",
+        json={
+            "model": CHAT_MODEL,
+            "prompt": prompt,
+            "stream": False,
+        },
+        timeout=300,
+    )
+    response.raise_for_status()
+
+    questions = extract_json_array(response.json()["response"])
+    normalized_questions: list[dict[str, object]] = []
+    allowed_types = {"multiple_choice", "short_answer", "true_false"}
+
+    for question_item in questions[:count]:
+        question_type = str(question_item.get("question_type", "")).strip()
+        if question_type not in allowed_types:
+            question_type = "short_answer"
+
+        question = str(question_item.get("question", "")).strip()
+        correct_answer = str(question_item.get("correct_answer", "")).strip()
+        explanation = str(question_item.get("explanation", "")).strip()
+        raw_choices = question_item.get("choices", [])
+        choices = [
+            str(choice).strip()
+            for choice in raw_choices
+            if str(choice).strip()
+        ] if isinstance(raw_choices, list) else []
+
+        if question and correct_answer and explanation:
+            normalized_questions.append(
+                {
+                    "question_type": question_type,
+                    "question": question,
+                    "choices": choices,
+                    "correct_answer": correct_answer,
+                    "explanation": explanation,
+                }
+            )
+
+    if not normalized_questions:
+        raise ValueError("No valid quiz questions were generated")
+
+    return normalized_questions

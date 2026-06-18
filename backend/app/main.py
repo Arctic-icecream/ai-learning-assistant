@@ -1,6 +1,7 @@
 from pathlib import Path
 import csv
 import io
+import json
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
@@ -13,8 +14,8 @@ from sqlalchemy.orm import Session
 from .chunker import chunk_text
 from .database import Base, engine, get_db
 from .embeddings import create_embedding
-from .llm import generate_answer, generate_flashcards
-from .models import Document, DocumentChunk, Flashcard
+from .llm import generate_answer, generate_flashcards, generate_quiz_questions
+from .models import Document, DocumentChunk, Flashcard, QuizQuestion
 from .pdf_parser import extract_pdf_text
 
 app = FastAPI(title="AI Learning Assistant API")
@@ -43,6 +44,10 @@ class AnswerRequest(BaseModel):
 
 class FlashcardGenerateRequest(BaseModel):
     count: int = Field(default=10, ge=1, le=20)
+
+
+class QuizGenerateRequest(BaseModel):
+    count: int = Field(default=8, ge=1, le=20)
 
 
 def vector_literal(vector: list[float]) -> str:
@@ -80,6 +85,7 @@ def document_response(document: Document, db: Session) -> dict[str, object]:
 def process_document(document: Document, db: Session) -> None:
     db.query(DocumentChunk).filter(DocumentChunk.document_id == document.id).delete()
     db.query(Flashcard).filter(Flashcard.document_id == document.id).delete()
+    db.query(QuizQuestion).filter(QuizQuestion.document_id == document.id).delete()
 
     document.parse_status = "skipped"
     document.parse_error = None
@@ -274,6 +280,28 @@ def flashcard_response(card: Flashcard) -> dict[str, object]:
     }
 
 
+def quiz_question_response(question: QuizQuestion) -> dict[str, object]:
+    choices: list[str] = []
+    if question.choices:
+        try:
+            parsed_choices = json.loads(question.choices)
+            if isinstance(parsed_choices, list):
+                choices = [str(choice) for choice in parsed_choices]
+        except json.JSONDecodeError:
+            choices = []
+
+    return {
+        "id": question.id,
+        "document_id": question.document_id,
+        "question_type": question.question_type,
+        "question": question.question,
+        "choices": choices,
+        "correct_answer": question.correct_answer,
+        "explanation": question.explanation,
+        "created_at": question.created_at.isoformat(),
+    }
+
+
 @app.get("/documents/{document_id}/flashcards")
 def list_flashcards(
     document_id: int, db: Session = Depends(get_db)
@@ -366,6 +394,66 @@ def generate_document_flashcards(
         db.refresh(card)
 
     return [flashcard_response(card) for card in card_records]
+
+
+@app.get("/documents/{document_id}/quiz")
+def list_quiz_questions(
+    document_id: int, db: Session = Depends(get_db)
+) -> list[dict[str, object]]:
+    questions = (
+        db.query(QuizQuestion)
+        .filter(QuizQuestion.document_id == document_id)
+        .order_by(QuizQuestion.id.asc())
+        .all()
+    )
+
+    return [quiz_question_response(question) for question in questions]
+
+
+@app.post("/documents/{document_id}/quiz/generate")
+def generate_document_quiz(
+    document_id: int,
+    request: QuizGenerateRequest,
+    db: Session = Depends(get_db),
+) -> list[dict[str, object]]:
+    document = db.get(Document, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    chunks = (
+        db.query(DocumentChunk)
+        .filter(DocumentChunk.document_id == document_id)
+        .order_by(DocumentChunk.chunk_index.asc())
+        .limit(8)
+        .all()
+    )
+    if not chunks:
+        raise HTTPException(status_code=400, detail="Document has no chunks")
+
+    context = "\n\n".join(
+        f"Chunk {chunk.chunk_index + 1}:\n{chunk.content}" for chunk in chunks
+    )
+    generated_questions = generate_quiz_questions(context, request.count)
+
+    db.query(QuizQuestion).filter(QuizQuestion.document_id == document_id).delete()
+    question_records = [
+        QuizQuestion(
+            document_id=document_id,
+            question_type=str(question["question_type"]),
+            question=str(question["question"]),
+            choices=json.dumps(question["choices"], ensure_ascii=False),
+            correct_answer=str(question["correct_answer"]),
+            explanation=str(question["explanation"]),
+        )
+        for question in generated_questions
+    ]
+    db.add_all(question_records)
+    db.commit()
+
+    for question in question_records:
+        db.refresh(question)
+
+    return [quiz_question_response(question) for question in question_records]
 
 
 def semantic_search(

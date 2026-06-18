@@ -74,6 +74,17 @@ type Flashcard = {
   created_at: string;
 };
 
+type QuizQuestion = {
+  id: number;
+  document_id: number;
+  question_type: string;
+  question: string;
+  choices: string[];
+  correct_answer: string;
+  explanation: string;
+  created_at: string;
+};
+
 export default function Home() {
   const [health, setHealth] = useState<HealthState>({
     status: "idle",
@@ -115,6 +126,13 @@ export default function Home() {
     useState<DocumentRecord | null>(null);
   const [generatingCardsId, setGeneratingCardsId] = useState<number | null>(null);
   const [flippedCardIds, setFlippedCardIds] = useState<number[]>([]);
+  const [quizQuestions, setQuizQuestions] = useState<QuizQuestion[]>([]);
+  const [quizMessage, setQuizMessage] = useState(
+    "Select a document to view quiz questions."
+  );
+  const [quizDocument, setQuizDocument] = useState<DocumentRecord | null>(null);
+  const [generatingQuizId, setGeneratingQuizId] = useState<number | null>(null);
+  const [revealedQuizIds, setRevealedQuizIds] = useState<number[]>([]);
 
   useEffect(() => {
     void loadDocuments();
@@ -249,6 +267,7 @@ export default function Home() {
     setSelectedDocument(document);
     await loadChunks(document.id);
     await loadFlashcards(document);
+    await loadQuiz(document);
   }
 
   async function reprocessDocument(document: DocumentRecord) {
@@ -272,6 +291,9 @@ export default function Home() {
       setFlashcardDocument(updatedDocument);
       setFlashcards([]);
       setFlashcardsMessage("Flashcards were cleared because the document was reprocessed.");
+      setQuizDocument(updatedDocument);
+      setQuizQuestions([]);
+      setQuizMessage("Quiz questions were cleared because the document was reprocessed.");
       await loadDocuments();
       await loadChunks(updatedDocument.id);
     } catch (error) {
@@ -380,6 +402,68 @@ export default function Home() {
     }
   }
 
+  async function loadQuiz(document: DocumentRecord) {
+    setQuizDocument(document);
+    setQuizMessage("Loading quiz questions...");
+
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:8000/documents/${document.id}/quiz`
+      );
+
+      if (!response.ok) {
+        throw new Error(`Quiz list failed with ${response.status}`);
+      }
+
+      const data = (await response.json()) as QuizQuestion[];
+      setQuizQuestions(data);
+      setRevealedQuizIds([]);
+      setQuizMessage(
+        data.length === 0
+          ? "No quiz questions generated for this document yet."
+          : `${data.length} quiz question${data.length === 1 ? "" : "s"} ready.`
+      );
+    } catch (error) {
+      setQuizMessage(
+        error instanceof Error ? error.message : "Could not load quiz questions."
+      );
+    }
+  }
+
+  async function generateQuiz(document: DocumentRecord) {
+    setGeneratingQuizId(document.id);
+    setQuizDocument(document);
+    setQuizMessage(`Generating quiz questions for ${document.filename}...`);
+
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:8000/documents/${document.id}/quiz/generate`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ count: 8 })
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(`Quiz generation failed with ${response.status}`);
+      }
+
+      const data = (await response.json()) as QuizQuestion[];
+      setQuizQuestions(data);
+      setRevealedQuizIds([]);
+      setQuizMessage(`${data.length} quiz questions generated.`);
+    } catch (error) {
+      setQuizMessage(
+        error instanceof Error ? error.message : "Could not generate quiz questions."
+      );
+    } finally {
+      setGeneratingQuizId(null);
+    }
+  }
+
   async function generateRagAnswer() {
     if (!query.trim()) {
       setAnswer({
@@ -442,6 +526,14 @@ export default function Home() {
     );
   }
 
+  function toggleQuizAnswer(questionId: number) {
+    setRevealedQuizIds((currentIds) =>
+      currentIds.includes(questionId)
+        ? currentIds.filter((id) => id !== questionId)
+        : [...currentIds, questionId]
+    );
+  }
+
   function exportAnkiCsv() {
     if (!flashcardDocument) {
       setFlashcardsMessage("Select a document before exporting flashcards.");
@@ -454,7 +546,7 @@ export default function Home() {
   return (
     <main className="shell">
       <section className="hero">
-        <p className="eyebrow">Day 9 flashcards</p>
+        <p className="eyebrow">Day 11 quiz generation</p>
         <h1>AI Learning Assistant</h1>
         <p className="summary">
           Upload learning materials, build a knowledge base, and ask questions
@@ -590,6 +682,21 @@ export default function Home() {
                   >
                     Cards
                   </button>
+                  <button
+                    className="secondary-button compact-button"
+                    disabled={generatingQuizId === document.id}
+                    onClick={() => void generateQuiz(document)}
+                    type="button"
+                  >
+                    {generatingQuizId === document.id ? "Working..." : "Generate Quiz"}
+                  </button>
+                  <button
+                    className="link-button"
+                    onClick={() => void loadQuiz(document)}
+                    type="button"
+                  >
+                    Quiz
+                  </button>
                   <span>{new Date(document.created_at).toLocaleString()}</span>
                 </li>
               ))}
@@ -607,7 +714,7 @@ export default function Home() {
               {chunks.slice(0, 5).map((chunk) => (
                 <li key={chunk.id}>
                   <div className="chunk-meta">
-                    Chunk {chunk.chunk_index + 1} · {chunk.char_count} chars ·{" "}
+                    Chunk {chunk.chunk_index + 1} - {chunk.char_count} chars -{" "}
                     <span className={`embedding-status ${chunk.embedding_status}`}>
                       {chunk.embedding_status}
                     </span>
@@ -716,6 +823,53 @@ export default function Home() {
                   </button>
                 </li>
               ))}
+            </ol>
+          ) : null}
+        </div>
+        <div className="quiz-panel">
+          <h2>
+            Quiz
+            {quizDocument ? `: ${quizDocument.filename}` : ""}
+          </h2>
+          <p className="health-message">{quizMessage}</p>
+          {quizQuestions.length > 0 ? (
+            <ol className="quiz-list">
+              {quizQuestions.map((question) => {
+                const isRevealed = revealedQuizIds.includes(question.id);
+
+                return (
+                  <li key={question.id}>
+                    <div className="quiz-question">
+                      <span className="quiz-type">
+                        {question.question_type.replace("_", " ")}
+                      </span>
+                      <h3>{question.question}</h3>
+                      {question.choices.length > 0 ? (
+                        <ol className="quiz-choices">
+                          {question.choices.map((choice) => (
+                            <li key={choice}>{choice}</li>
+                          ))}
+                        </ol>
+                      ) : null}
+                      <button
+                        className="secondary-button compact-button"
+                        onClick={() => toggleQuizAnswer(question.id)}
+                        type="button"
+                      >
+                        {isRevealed ? "Hide Answer" : "Show Answer"}
+                      </button>
+                      {isRevealed ? (
+                        <div className="quiz-answer">
+                          <strong>Correct answer:</strong>
+                          <p>{question.correct_answer}</p>
+                          <strong>Explanation:</strong>
+                          <p>{question.explanation}</p>
+                        </div>
+                      ) : null}
+                    </div>
+                  </li>
+                );
+              })}
             </ol>
           ) : null}
         </div>
