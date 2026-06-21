@@ -15,7 +15,14 @@ from .chunker import chunk_text
 from .database import Base, engine, get_db
 from .embeddings import create_embedding
 from .llm import generate_answer, generate_flashcards, generate_quiz_questions
-from .models import Document, DocumentChunk, Flashcard, QuizQuestion
+from .models import (
+    Document,
+    DocumentChunk,
+    Flashcard,
+    QuizAttempt,
+    QuizQuestion,
+    QuizResponse,
+)
 from .pdf_parser import extract_pdf_text
 
 app = FastAPI(title="AI Learning Assistant API")
@@ -48,6 +55,15 @@ class FlashcardGenerateRequest(BaseModel):
 
 class QuizGenerateRequest(BaseModel):
     count: int = Field(default=8, ge=1, le=20)
+
+
+class QuizAnswerRequest(BaseModel):
+    question_id: int
+    answer: str = ""
+
+
+class QuizSubmitRequest(BaseModel):
+    answers: list[QuizAnswerRequest] = Field(min_length=1)
 
 
 def vector_literal(vector: list[float]) -> str:
@@ -83,6 +99,17 @@ def document_response(document: Document, db: Session) -> dict[str, object]:
 
 
 def process_document(document: Document, db: Session) -> None:
+    attempt_ids = [
+        attempt_id
+        for (attempt_id,) in db.query(QuizAttempt.id)
+        .filter(QuizAttempt.document_id == document.id)
+        .all()
+    ]
+    if attempt_ids:
+        db.query(QuizResponse).filter(QuizResponse.attempt_id.in_(attempt_ids)).delete(
+            synchronize_session=False
+        )
+    db.query(QuizAttempt).filter(QuizAttempt.document_id == document.id).delete()
     db.query(DocumentChunk).filter(DocumentChunk.document_id == document.id).delete()
     db.query(Flashcard).filter(Flashcard.document_id == document.id).delete()
     db.query(QuizQuestion).filter(QuizQuestion.document_id == document.id).delete()
@@ -302,6 +329,57 @@ def quiz_question_response(question: QuizQuestion) -> dict[str, object]:
     }
 
 
+def normalize_quiz_answer(answer: str) -> str:
+    return " ".join(answer.strip().casefold().split())
+
+
+def quiz_attempt_response(attempt: QuizAttempt, responses: list[QuizResponse]) -> dict[str, object]:
+    return {
+        "id": attempt.id,
+        "document_id": attempt.document_id,
+        "total_questions": attempt.total_questions,
+        "scored_questions": attempt.scored_questions,
+        "correct_answers": attempt.correct_answers,
+        "created_at": attempt.created_at.isoformat(),
+        "responses": [
+            {
+                "question_id": response.quiz_question_id,
+                "submitted_answer": response.submitted_answer,
+                "is_correct": response.is_correct,
+            }
+            for response in responses
+        ],
+    }
+
+
+def quiz_attempts_for_document(document_id: int, db: Session) -> list[dict[str, object]]:
+    attempts = (
+        db.query(QuizAttempt)
+        .filter(QuizAttempt.document_id == document_id)
+        .order_by(QuizAttempt.created_at.desc())
+        .limit(10)
+        .all()
+    )
+    if not attempts:
+        return []
+
+    attempt_ids = [attempt.id for attempt in attempts]
+    responses = (
+        db.query(QuizResponse)
+        .filter(QuizResponse.attempt_id.in_(attempt_ids))
+        .order_by(QuizResponse.id.asc())
+        .all()
+    )
+    responses_by_attempt = {attempt.id: [] for attempt in attempts}
+    for response in responses:
+        responses_by_attempt[response.attempt_id].append(response)
+
+    return [
+        quiz_attempt_response(attempt, responses_by_attempt[attempt.id])
+        for attempt in attempts
+    ]
+
+
 @app.get("/documents/{document_id}/flashcards")
 def list_flashcards(
     document_id: int, db: Session = Depends(get_db)
@@ -435,6 +513,17 @@ def generate_document_quiz(
     )
     generated_questions = generate_quiz_questions(context, request.count)
 
+    attempt_ids = [
+        attempt_id
+        for (attempt_id,) in db.query(QuizAttempt.id)
+        .filter(QuizAttempt.document_id == document_id)
+        .all()
+    ]
+    if attempt_ids:
+        db.query(QuizResponse).filter(QuizResponse.attempt_id.in_(attempt_ids)).delete(
+            synchronize_session=False
+        )
+    db.query(QuizAttempt).filter(QuizAttempt.document_id == document_id).delete()
     db.query(QuizQuestion).filter(QuizQuestion.document_id == document_id).delete()
     question_records = [
         QuizQuestion(
@@ -454,6 +543,85 @@ def generate_document_quiz(
         db.refresh(question)
 
     return [quiz_question_response(question) for question in question_records]
+
+
+@app.get("/documents/{document_id}/quiz/attempts")
+def list_quiz_attempts(
+    document_id: int, db: Session = Depends(get_db)
+) -> list[dict[str, object]]:
+    document = db.get(Document, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    return quiz_attempts_for_document(document_id, db)
+
+
+@app.post("/documents/{document_id}/quiz/submit")
+def submit_quiz(
+    document_id: int,
+    request: QuizSubmitRequest,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    document = db.get(Document, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    questions = (
+        db.query(QuizQuestion)
+        .filter(QuizQuestion.document_id == document_id)
+        .order_by(QuizQuestion.id.asc())
+        .all()
+    )
+    if not questions:
+        raise HTTPException(status_code=400, detail="Document has no quiz questions")
+
+    answers_by_question = {answer.question_id: answer.answer for answer in request.answers}
+    question_ids = {question.id for question in questions}
+    unknown_question_ids = set(answers_by_question) - question_ids
+    if unknown_question_ids:
+        raise HTTPException(status_code=400, detail="Quiz submission contains an invalid question")
+
+    attempt = QuizAttempt(
+        document_id=document_id,
+        total_questions=len(questions),
+        scored_questions=0,
+        correct_answers=0,
+    )
+    db.add(attempt)
+    db.flush()
+
+    response_records = []
+    for question in questions:
+        submitted_answer = answers_by_question.get(question.id, "").strip()
+        is_objective_question = question.question_type in {
+            "multiple_choice",
+            "true_false",
+        }
+        is_correct = (
+            normalize_quiz_answer(submitted_answer)
+            == normalize_quiz_answer(question.correct_answer)
+            if is_objective_question and submitted_answer
+            else None
+        )
+        if is_objective_question:
+            attempt.scored_questions += 1
+            if is_correct:
+                attempt.correct_answers += 1
+
+        response_records.append(
+            QuizResponse(
+                attempt_id=attempt.id,
+                quiz_question_id=question.id,
+                submitted_answer=submitted_answer,
+                is_correct=is_correct,
+            )
+        )
+
+    db.add_all(response_records)
+    db.commit()
+    db.refresh(attempt)
+
+    return quiz_attempt_response(attempt, response_records)
 
 
 def semantic_search(

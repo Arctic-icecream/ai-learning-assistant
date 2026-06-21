@@ -85,6 +85,22 @@ type QuizQuestion = {
   created_at: string;
 };
 
+type QuizResponse = {
+  question_id: number;
+  submitted_answer: string;
+  is_correct: boolean | null;
+};
+
+type QuizAttempt = {
+  id: number;
+  document_id: number;
+  total_questions: number;
+  scored_questions: number;
+  correct_answers: number;
+  created_at: string;
+  responses: QuizResponse[];
+};
+
 export default function Home() {
   const [health, setHealth] = useState<HealthState>({
     status: "idle",
@@ -133,6 +149,9 @@ export default function Home() {
   const [quizDocument, setQuizDocument] = useState<DocumentRecord | null>(null);
   const [generatingQuizId, setGeneratingQuizId] = useState<number | null>(null);
   const [revealedQuizIds, setRevealedQuizIds] = useState<number[]>([]);
+  const [quizAnswers, setQuizAnswers] = useState<Record<number, string>>({});
+  const [submittingQuiz, setSubmittingQuiz] = useState(false);
+  const [quizAttempts, setQuizAttempts] = useState<QuizAttempt[]>([]);
 
   useEffect(() => {
     void loadDocuments();
@@ -268,6 +287,7 @@ export default function Home() {
     await loadChunks(document.id);
     await loadFlashcards(document);
     await loadQuiz(document);
+    await loadQuizAttempts(document);
   }
 
   async function reprocessDocument(document: DocumentRecord) {
@@ -293,6 +313,8 @@ export default function Home() {
       setFlashcardsMessage("Flashcards were cleared because the document was reprocessed.");
       setQuizDocument(updatedDocument);
       setQuizQuestions([]);
+      setQuizAnswers({});
+      setQuizAttempts([]);
       setQuizMessage("Quiz questions were cleared because the document was reprocessed.");
       await loadDocuments();
       await loadChunks(updatedDocument.id);
@@ -418,6 +440,7 @@ export default function Home() {
       const data = (await response.json()) as QuizQuestion[];
       setQuizQuestions(data);
       setRevealedQuizIds([]);
+      setQuizAnswers({});
       setQuizMessage(
         data.length === 0
           ? "No quiz questions generated for this document yet."
@@ -454,6 +477,8 @@ export default function Home() {
       const data = (await response.json()) as QuizQuestion[];
       setQuizQuestions(data);
       setRevealedQuizIds([]);
+      setQuizAnswers({});
+      setQuizAttempts([]);
       setQuizMessage(`${data.length} quiz questions generated.`);
     } catch (error) {
       setQuizMessage(
@@ -461,6 +486,77 @@ export default function Home() {
       );
     } finally {
       setGeneratingQuizId(null);
+    }
+  }
+
+  async function loadQuizAttempts(document: DocumentRecord) {
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:8000/documents/${document.id}/quiz/attempts`
+      );
+
+      if (!response.ok) {
+        throw new Error(`Quiz attempts failed with ${response.status}`);
+      }
+
+      const data = (await response.json()) as QuizAttempt[];
+      setQuizAttempts(data);
+    } catch (error) {
+      setQuizAttempts([]);
+      setQuizMessage(
+        error instanceof Error ? error.message : "Could not load quiz attempts."
+      );
+    }
+  }
+
+  function setQuizAnswer(questionId: number, answer: string) {
+    setQuizAnswers((currentAnswers) => ({
+      ...currentAnswers,
+      [questionId]: answer
+    }));
+  }
+
+  async function submitQuiz() {
+    if (!quizDocument || quizQuestions.length === 0) {
+      setQuizMessage("Load quiz questions before submitting an attempt.");
+      return;
+    }
+
+    setSubmittingQuiz(true);
+    setQuizMessage("Scoring and saving your quiz attempt...");
+
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:8000/documents/${quizDocument.id}/quiz/submit`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            answers: quizQuestions.map((question) => ({
+              question_id: question.id,
+              answer: quizAnswers[question.id] ?? ""
+            }))
+          })
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(`Quiz submission failed with ${response.status}`);
+      }
+
+      const attempt = (await response.json()) as QuizAttempt;
+      setQuizAttempts((currentAttempts) => [attempt, ...currentAttempts]);
+      setQuizMessage(
+        `Attempt saved: ${attempt.correct_answers} of ${attempt.scored_questions} objective questions correct.`
+      );
+    } catch (error) {
+      setQuizMessage(
+        error instanceof Error ? error.message : "Could not submit quiz attempt."
+      );
+    } finally {
+      setSubmittingQuiz(false);
     }
   }
 
@@ -546,7 +642,7 @@ export default function Home() {
   return (
     <main className="shell">
       <section className="hero">
-        <p className="eyebrow">Day 11 quiz generation</p>
+        <p className="eyebrow">Day 12 quiz attempts</p>
         <h1>AI Learning Assistant</h1>
         <p className="summary">
           Upload learning materials, build a knowledge base, and ask questions
@@ -845,12 +941,30 @@ export default function Home() {
                       </span>
                       <h3>{question.question}</h3>
                       {question.choices.length > 0 ? (
-                        <ol className="quiz-choices">
+                        <div className="quiz-choices">
                           {question.choices.map((choice) => (
-                            <li key={choice}>{choice}</li>
+                            <label key={choice} className="quiz-choice">
+                              <input
+                                checked={quizAnswers[question.id] === choice}
+                                name={`quiz-question-${question.id}`}
+                                onChange={() => setQuizAnswer(question.id, choice)}
+                                type="radio"
+                                value={choice}
+                              />
+                              <span>{choice}</span>
+                            </label>
                           ))}
-                        </ol>
-                      ) : null}
+                        </div>
+                      ) : (
+                        <textarea
+                          className="quiz-text-answer"
+                          onChange={(event) =>
+                            setQuizAnswer(question.id, event.target.value)
+                          }
+                          placeholder="Write your answer"
+                          value={quizAnswers[question.id] ?? ""}
+                        />
+                      )}
                       <button
                         className="secondary-button compact-button"
                         onClick={() => toggleQuizAnswer(question.id)}
@@ -871,6 +985,31 @@ export default function Home() {
                 );
               })}
             </ol>
+          ) : null}
+          {quizQuestions.length > 0 ? (
+            <button
+              className="primary-button"
+              disabled={submittingQuiz}
+              onClick={() => void submitQuiz()}
+              type="button"
+            >
+              {submittingQuiz ? "Submitting..." : "Submit Quiz"}
+            </button>
+          ) : null}
+          {quizAttempts.length > 0 ? (
+            <div className="quiz-attempts">
+              <h3>Saved attempts</h3>
+              <ol>
+                {quizAttempts.map((attempt) => (
+                  <li key={attempt.id}>
+                    <strong>
+                      {attempt.correct_answers} / {attempt.scored_questions}
+                    </strong>{" "}
+                    objective questions correct. {attempt.total_questions - attempt.scored_questions} short answer response{attempt.total_questions - attempt.scored_questions === 1 ? "" : "s"} saved. {new Date(attempt.created_at).toLocaleString()}
+                  </li>
+                ))}
+              </ol>
+            </div>
           ) : null}
         </div>
       </section>

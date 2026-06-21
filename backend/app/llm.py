@@ -109,6 +109,8 @@ Each item must have:
 - "correct_answer": the correct answer
 - "explanation": a short explanation grounded in the material
 
+For multiple_choice and true_false, correct_answer must exactly match one item in choices.
+
 Course material:
 {context}
 

@@ -75,3 +75,35 @@ class QuizQuestion(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, nullable=False
     )
+
+
+class QuizAttempt(Base):
+    __tablename__ = "quiz_attempts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    document_id: Mapped[int] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    total_questions: Mapped[int] = mapped_column(Integer, nullable=False)
+    scored_questions: Mapped[int] = mapped_column(Integer, nullable=False)
+    correct_answers: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+
+
+class QuizResponse(Base):
+    __tablename__ = "quiz_responses"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    attempt_id: Mapped[int] = mapped_column(
+        ForeignKey("quiz_attempts.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    quiz_question_id: Mapped[int] = mapped_column(
+        ForeignKey("quiz_questions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    submitted_answer: Mapped[str] = mapped_column(Text, nullable=False)
+    is_correct: Mapped[bool | None] = mapped_column(nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
