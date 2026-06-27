@@ -215,7 +215,8 @@ h2 {
 }
 
 .parse-status.empty,
-.parse-status.skipped {
+.parse-status.skipped,
+.parse-status.unsupported {
   color: #8a5a00;
 }
 

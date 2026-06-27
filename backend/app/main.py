@@ -13,6 +13,11 @@ from sqlalchemy.orm import Session
 
 from .chunker import chunk_text
 from .database import Base, engine, get_db
+from .document_parser import (
+    SUPPORTED_DOCUMENT_EXTENSIONS,
+    UnsupportedDocumentTypeError,
+    extract_document_text,
+)
 from .embeddings import create_embedding
 from .llm import generate_answer, generate_flashcards, generate_quiz_questions
 from .models import (
@@ -23,7 +28,6 @@ from .models import (
     QuizQuestion,
     QuizResponse,
 )
-from .pdf_parser import extract_pdf_text
 
 app = FastAPI(title="AI Learning Assistant API")
 
@@ -120,19 +124,18 @@ def process_document(document: Document, db: Session) -> None:
     document.text_char_count = 0
 
     storage_path = Path(document.storage_path)
-    is_pdf = (
-        document.content_type == "application/pdf"
-        or document.original_filename.lower().endswith(".pdf")
-    )
-
-    if is_pdf:
-        try:
-            document.extracted_text = extract_pdf_text(storage_path)
-            document.text_char_count = len(document.extracted_text)
-            document.parse_status = "parsed" if document.extracted_text else "empty"
-        except Exception as error:
-            document.parse_status = "failed"
-            document.parse_error = str(error)
+    try:
+        document.extracted_text = extract_document_text(
+            storage_path, document.original_filename
+        )
+        document.text_char_count = len(document.extracted_text)
+        document.parse_status = "parsed" if document.extracted_text else "empty"
+    except UnsupportedDocumentTypeError as error:
+        document.parse_status = "unsupported"
+        document.parse_error = str(error)
+    except Exception as error:
+        document.parse_status = "failed"
+        document.parse_error = str(error)
 
     db.add(document)
     db.commit()
@@ -221,8 +224,16 @@ async def upload_document(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
-    file_bytes = await file.read()
     original_filename = Path(file.filename or "unknown").name
+    extension = Path(original_filename).suffix.lower()
+    if extension not in SUPPORTED_DOCUMENT_EXTENSIONS:
+        supported = ", ".join(sorted(SUPPORTED_DOCUMENT_EXTENSIONS))
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported document type. Supported: {supported}",
+        )
+
+    file_bytes = await file.read()
     stored_filename = f"{uuid4().hex}_{original_filename}"
     storage_path = UPLOAD_DIR / stored_filename
     storage_path.write_bytes(file_bytes)

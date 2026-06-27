@@ -211,7 +211,12 @@ export default function Home() {
       });
 
       if (!response.ok) {
-        throw new Error(`Upload failed with ${response.status}`);
+        const errorData = (await response.json().catch(() => null)) as {
+          detail?: string;
+        } | null;
+        throw new Error(
+          errorData?.detail ?? `Upload failed with ${response.status}`
+        );
       }
 
       const data = (await response.json()) as UploadedDocument;
@@ -642,7 +647,7 @@ export default function Home() {
   return (
     <main className="shell">
       <section className="hero">
-        <p className="eyebrow">Day 12 quiz attempts</p>
+        <p className="eyebrow">Day 13 Word and PowerPoint parsing</p>
         <h1>AI Learning Assistant</h1>
         <p className="summary">
           Upload learning materials, build a knowledge base, and ask questions
@@ -663,9 +668,10 @@ export default function Home() {
         </div>
         <div className="upload-panel">
           <label className="file-label" htmlFor="document-upload">
-            Choose study material
+            Choose PDF, Word, or PowerPoint material
           </label>
           <input
+            accept=".pdf,.docx,.pptx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.presentationml.presentation"
             id="document-upload"
             onChange={(event) =>
               setSelectedFile(event.target.files?.[0] ?? null)
