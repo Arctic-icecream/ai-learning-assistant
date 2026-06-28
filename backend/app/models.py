@@ -16,6 +16,10 @@ class Document(Base):
     content_type: Mapped[str] = mapped_column(String(100), nullable=False)
     size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
     storage_path: Mapped[str] = mapped_column(String(500), nullable=False)
+    source_type: Mapped[str] = mapped_column(
+        String(20), default="upload", nullable=False
+    )
+    source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     extracted_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     text_char_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     parse_status: Mapped[str] = mapped_column(String(50), default="pending", nullable=False)

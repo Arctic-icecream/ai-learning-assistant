@@ -28,6 +28,7 @@ from .models import (
     QuizQuestion,
     QuizResponse,
 )
+from .web_parser import WebImportError, fetch_web_page
 
 app = FastAPI(title="AI Learning Assistant API")
 
@@ -70,6 +71,10 @@ class QuizSubmitRequest(BaseModel):
     answers: list[QuizAnswerRequest] = Field(min_length=1)
 
 
+class WebImportRequest(BaseModel):
+    url: str = Field(min_length=1, max_length=2048)
+
+
 def vector_literal(vector: list[float]) -> str:
     return "[" + ",".join(str(value) for value in vector) + "]"
 
@@ -93,6 +98,8 @@ def document_response(document: Document, db: Session) -> dict[str, object]:
         "content_type": document.content_type,
         "size_bytes": document.size_bytes,
         "storage_path": document.storage_path,
+        "source_type": document.source_type,
+        "source_url": document.source_url,
         "parse_status": document.parse_status,
         "text_char_count": document.text_char_count,
         "parse_error": document.parse_error,
@@ -197,6 +204,14 @@ def ensure_document_parse_columns() -> None:
         connection.execute(
             text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS parse_error TEXT")
         )
+        connection.execute(
+            text(
+                "ALTER TABLE documents ADD COLUMN IF NOT EXISTS source_type VARCHAR(20) NOT NULL DEFAULT 'upload'"
+            )
+        )
+        connection.execute(
+            text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS source_url TEXT")
+        )
 
 
 def ensure_chunk_embedding_columns() -> None:
@@ -245,6 +260,44 @@ async def upload_document(
         content_type=content_type,
         size_bytes=len(file_bytes),
         storage_path=str(storage_path),
+    )
+
+    db.add(document)
+    db.commit()
+    db.refresh(document)
+    process_document(document, db)
+
+    return document_response(document, db)
+
+
+@app.post("/documents/import-url")
+def import_web_page(
+    request: WebImportRequest,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    try:
+        web_page = fetch_web_page(request.url)
+    except WebImportError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+    safe_title = "".join(
+        character if character.isalnum() or character in ("-", "_") else "_"
+        for character in web_page.title
+    ).strip("_")[:80]
+    original_filename = f"{safe_title or 'web-page'}.html"
+    stored_filename = f"{uuid4().hex}_{original_filename}"
+    storage_path = UPLOAD_DIR / stored_filename
+    html_bytes = web_page.html.encode("utf-8")
+    storage_path.write_bytes(html_bytes)
+
+    document = Document(
+        original_filename=original_filename,
+        stored_filename=stored_filename,
+        content_type="text/html",
+        size_bytes=len(html_bytes),
+        storage_path=str(storage_path),
+        source_type="url",
+        source_url=web_page.url,
     )
 
     db.add(document)

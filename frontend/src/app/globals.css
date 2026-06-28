@@ -108,6 +108,24 @@ input[type="file"] {
   font-size: 15px;
 }
 
+.web-import {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+  padding-top: 24px;
+  border-top: 1px solid #d8dee8;
+}
+
+.web-import input[type="url"] {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid #c7d0dd;
+  border-radius: 8px;
+  padding: 0 12px;
+  color: #17202a;
+  font: inherit;
+}
+
 .upload-result {
   display: grid;
   gap: 10px;
@@ -199,6 +217,18 @@ h2 {
   min-width: 0;
   color: #17202a;
   font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.document-identity {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.document-identity a {
+  color: #4263eb;
+  font-size: 13px;
   overflow-wrap: anywhere;
 }
 

@@ -17,6 +17,8 @@ type UploadedDocument = {
   parse_error: string | null;
   chunk_count: number;
   embedded_count: number;
+  source_type: string;
+  source_url: string | null;
 };
 
 type UploadState = {
@@ -35,6 +37,8 @@ type DocumentRecord = {
   parse_error: string | null;
   chunk_count: number;
   embedded_count: number;
+  source_type: string;
+  source_url: string | null;
   created_at: string;
 };
 
@@ -110,6 +114,11 @@ export default function Home() {
   const [upload, setUpload] = useState<UploadState>({
     status: "idle",
     message: "No file uploaded yet."
+  });
+  const [webUrl, setWebUrl] = useState("");
+  const [webImport, setWebImport] = useState<UploadState>({
+    status: "idle",
+    message: "No web page imported yet."
   });
   const [documents, setDocuments] = useState<DocumentRecord[]>([]);
   const [documentsMessage, setDocumentsMessage] = useState(
@@ -258,6 +267,58 @@ export default function Home() {
       setDocumentsMessage(
         error instanceof Error ? error.message : "Could not load documents."
       );
+    }
+  }
+
+  async function importWebPage() {
+    if (!webUrl.trim()) {
+      setWebImport({
+        status: "error",
+        message: "Enter a public web page URL first."
+      });
+      return;
+    }
+
+    setWebImport({
+      status: "loading",
+      message: "Downloading and indexing the web page..."
+    });
+
+    try {
+      const response = await fetch(
+        "http://127.0.0.1:8000/documents/import-url",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ url: webUrl.trim() })
+        }
+      );
+
+      if (!response.ok) {
+        const errorData = (await response.json().catch(() => null)) as {
+          detail?: string;
+        } | null;
+        throw new Error(
+          errorData?.detail ?? `Web import failed with ${response.status}`
+        );
+      }
+
+      const data = (await response.json()) as UploadedDocument;
+      setWebImport({
+        status: "success",
+        message: "Web page imported and indexed.",
+        document: data
+      });
+      await loadDocuments();
+      await loadChunks(data.id);
+    } catch (error) {
+      setWebImport({
+        status: "error",
+        message:
+          error instanceof Error ? error.message : "Could not import web page."
+      });
     }
   }
 
@@ -647,7 +708,7 @@ export default function Home() {
   return (
     <main className="shell">
       <section className="hero">
-        <p className="eyebrow">Day 13 Word and PowerPoint parsing</p>
+        <p className="eyebrow">Day 14 web page import</p>
         <h1>AI Learning Assistant</h1>
         <p className="summary">
           Upload learning materials, build a knowledge base, and ask questions
@@ -731,6 +792,55 @@ export default function Home() {
               ) : null}
             </dl>
           ) : null}
+          <div className="web-import">
+            <label className="file-label" htmlFor="web-url">
+              Import a public web page
+            </label>
+            <input
+              id="web-url"
+              onChange={(event) => setWebUrl(event.target.value)}
+              placeholder="https://example.com/article"
+              type="url"
+              value={webUrl}
+            />
+            <button
+              className="secondary-button"
+              disabled={webImport.status === "loading"}
+              onClick={() => void importWebPage()}
+              type="button"
+            >
+              {webImport.status === "loading" ? "Importing..." : "Import Web Page"}
+            </button>
+            <p className={`health-message ${webImport.status}`}>
+              {webImport.message}
+            </p>
+            {webImport.document ? (
+              <dl className="upload-result">
+                <div>
+                  <dt>Page</dt>
+                  <dd>{webImport.document.filename}</dd>
+                </div>
+                <div>
+                  <dt>Source</dt>
+                  <dd>{webImport.document.source_url}</dd>
+                </div>
+                <div>
+                  <dt>Text chars</dt>
+                  <dd>{webImport.document.text_char_count}</dd>
+                </div>
+                <div>
+                  <dt>Chunks</dt>
+                  <dd>{webImport.document.chunk_count}</dd>
+                </div>
+                <div>
+                  <dt>Embedded</dt>
+                  <dd>
+                    {webImport.document.embedded_count} / {webImport.document.chunk_count}
+                  </dd>
+                </div>
+              </dl>
+            ) : null}
+          </div>
         </div>
         <div className="documents-panel">
           <div className="documents-heading">
@@ -744,7 +854,18 @@ export default function Home() {
             <ul className="documents-list">
               {documents.map((document) => (
                 <li key={document.id}>
-                  <span className="document-name">{document.filename}</span>
+                  <div className="document-identity">
+                    <span className="document-name">{document.filename}</span>
+                    {document.source_url ? (
+                      <a
+                        href={document.source_url}
+                        rel="noreferrer"
+                        target="_blank"
+                      >
+                        Open source
+                      </a>
+                    ) : null}
+                  </div>
                   <span>{document.content_type}</span>
                   <span>{document.size_bytes} bytes</span>
                   <span className={`parse-status ${document.parse_status}`}>

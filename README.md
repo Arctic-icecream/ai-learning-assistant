@@ -13,6 +13,7 @@ Current document support:
 - PDF (`.pdf`)
 - Word Open XML (`.docx`)
 - PowerPoint Open XML (`.pptx`)
+- Public web pages (`http://` or `https://`)
 
 ## Day 1 Goal
 
@@ -88,7 +89,7 @@ Open:
 
 ## Current Learning Flow
 
-1. Upload a PDF, Word, or PowerPoint file.
+1. Upload a PDF, Word, or PowerPoint file, or import a public web page.
 2. Extract text with a format-specific parser.
 3. Split the text into chunks.
 4. Store chunks and embeddings.
