@@ -204,7 +204,7 @@ h2 {
 
 .documents-list li {
   display: grid;
-  grid-template-columns: minmax(160px, 1.4fr) minmax(120px, 0.8fr) minmax(90px, 0.5fr) minmax(80px, 0.5fr) minmax(90px, 0.5fr) minmax(100px, 0.5fr) minmax(110px, 0.5fr) minmax(100px, 0.5fr) minmax(120px, 0.6fr) minmax(60px, 0.3fr) minmax(110px, 0.5fr) minmax(50px, 0.3fr) minmax(160px, 0.8fr);
+  grid-template-columns: minmax(160px, 1.4fr) minmax(120px, 0.8fr) minmax(90px, 0.5fr) minmax(80px, 0.5fr) minmax(90px, 0.5fr) minmax(100px, 0.5fr) minmax(110px, 0.5fr) minmax(100px, 0.5fr) minmax(75px, 0.4fr) minmax(120px, 0.6fr) minmax(60px, 0.3fr) minmax(110px, 0.5fr) minmax(50px, 0.3fr) minmax(160px, 0.8fr);
   gap: 12px;
   align-items: center;
   padding: 12px 0;
@@ -312,6 +312,116 @@ h2 {
   font-size: 15px;
   line-height: 1.5;
   overflow-wrap: anywhere;
+}
+
+.summaries-panel {
+  display: grid;
+  gap: 14px;
+  width: min(760px, 100%);
+  margin-top: 32px;
+  padding-top: 28px;
+  border-top: 1px solid #d8dee8;
+}
+
+.summaries-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.summary-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.segmented-control {
+  display: inline-grid;
+  grid-template-columns: repeat(2, 1fr);
+  overflow: hidden;
+  border: 1px solid #c7d0dd;
+  border-radius: 6px;
+}
+
+.segmented-control button {
+  min-height: 36px;
+  padding: 0 14px;
+  border: 0;
+  border-right: 1px solid #c7d0dd;
+  background: #ffffff;
+  color: #4f5b67;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+}
+
+.segmented-control button:last-child {
+  border-right: 0;
+}
+
+.segmented-control button.active {
+  background: #17202a;
+  color: #ffffff;
+}
+
+.summaries-list {
+  display: grid;
+  gap: 16px;
+  margin: 0;
+  padding-left: 20px;
+}
+
+.summary-entry {
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+  border: 1px solid #c7d0dd;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.summary-meta {
+  display: flex;
+  gap: 10px 16px;
+  flex-wrap: wrap;
+  color: #4f5b67;
+  font-size: 13px;
+}
+
+.summary-meta strong {
+  color: #3046b7;
+  text-transform: uppercase;
+}
+
+.summary-content {
+  color: #17202a;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.summary-content > :first-child {
+  margin-top: 0;
+}
+
+.summary-content > :last-child {
+  margin-bottom: 0;
+}
+
+.summary-content h1,
+.summary-content h2,
+.summary-content h3 {
+  margin: 20px 0 8px;
+  font-size: 18px;
+  line-height: 1.35;
+}
+
+.summary-content p,
+.summary-content ul,
+.summary-content ol {
+  margin: 8px 0;
 }
 
 .chunk-error {

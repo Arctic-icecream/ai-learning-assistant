@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import ReactMarkdown from "react-markdown";
 
 type HealthState = {
   status: "idle" | "loading" | "success" | "error";
@@ -105,6 +106,19 @@ type QuizAttempt = {
   responses: QuizResponse[];
 };
 
+type SummaryMode = "brief" | "detailed";
+
+type DocumentSummary = {
+  id: number;
+  document_id: number;
+  mode: SummaryMode;
+  content: string;
+  model_name: string;
+  source_chunk_count: number;
+  model_call_count: number;
+  created_at: string;
+};
+
 export default function Home() {
   const [health, setHealth] = useState<HealthState>({
     status: "idle",
@@ -161,6 +175,16 @@ export default function Home() {
   const [quizAnswers, setQuizAnswers] = useState<Record<number, string>>({});
   const [submittingQuiz, setSubmittingQuiz] = useState(false);
   const [quizAttempts, setQuizAttempts] = useState<QuizAttempt[]>([]);
+  const [summaries, setSummaries] = useState<DocumentSummary[]>([]);
+  const [summaryMessage, setSummaryMessage] = useState(
+    "Select a document to view saved summaries."
+  );
+  const [summaryDocument, setSummaryDocument] =
+    useState<DocumentRecord | null>(null);
+  const [summaryMode, setSummaryMode] = useState<SummaryMode>("brief");
+  const [generatingSummaryId, setGeneratingSummaryId] = useState<number | null>(
+    null
+  );
 
   useEffect(() => {
     void loadDocuments();
@@ -354,6 +378,7 @@ export default function Home() {
     await loadFlashcards(document);
     await loadQuiz(document);
     await loadQuizAttempts(document);
+    await loadSummaries(document);
   }
 
   async function reprocessDocument(document: DocumentRecord) {
@@ -382,6 +407,9 @@ export default function Home() {
       setQuizAnswers({});
       setQuizAttempts([]);
       setQuizMessage("Quiz questions were cleared because the document was reprocessed.");
+      setSummaryDocument(updatedDocument);
+      setSummaries([]);
+      setSummaryMessage("Summaries were cleared because the document was reprocessed.");
       await loadDocuments();
       await loadChunks(updatedDocument.id);
     } catch (error) {
@@ -575,6 +603,76 @@ export default function Home() {
     }
   }
 
+  async function loadSummaries(document: DocumentRecord) {
+    setSummaryDocument(document);
+    setSummaryMessage("Loading saved summaries...");
+
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:8000/documents/${document.id}/summaries`
+      );
+
+      if (!response.ok) {
+        throw new Error(`Summary list failed with ${response.status}`);
+      }
+
+      const data = (await response.json()) as DocumentSummary[];
+      setSummaries(data);
+      setSummaryMessage(
+        data.length === 0
+          ? "No summaries generated for this document yet."
+          : `${data.length} saved summar${data.length === 1 ? "y" : "ies"}.`
+      );
+    } catch (error) {
+      setSummaries([]);
+      setSummaryMessage(
+        error instanceof Error ? error.message : "Could not load summaries."
+      );
+    }
+  }
+
+  async function generateSummary(document: DocumentRecord) {
+    setGeneratingSummaryId(document.id);
+    setSummaryDocument(document);
+    setSummaryMessage(
+      `Generating a ${summaryMode} summary for ${document.filename}...`
+    );
+
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:8000/documents/${document.id}/summaries/generate`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ mode: summaryMode })
+        }
+      );
+
+      if (!response.ok) {
+        const errorData = (await response.json().catch(() => null)) as {
+          detail?: string;
+        } | null;
+        throw new Error(
+          errorData?.detail ?? `Summary generation failed with ${response.status}`
+        );
+      }
+
+      const summary = (await response.json()) as DocumentSummary;
+      setSummaries((currentSummaries) => [summary, ...currentSummaries]);
+      setSummaryMessage(
+        `${summary.mode} summary saved after ${summary.model_call_count} local model call${summary.model_call_count === 1 ? "" : "s"}.`
+      );
+    } catch (error) {
+      setSummaryMessage(
+        error instanceof Error ? error.message : "Could not generate summary."
+      );
+    } finally {
+      setGeneratingSummaryId(null);
+    }
+  }
+
   function setQuizAnswer(questionId: number, answer: string) {
     setQuizAnswers((currentAnswers) => ({
       ...currentAnswers,
@@ -708,7 +806,7 @@ export default function Home() {
   return (
     <main className="shell">
       <section className="hero">
-        <p className="eyebrow">Day 14 web page import</p>
+        <p className="eyebrow">Day 15 document summaries</p>
         <h1>AI Learning Assistant</h1>
         <p className="summary">
           Upload learning materials, build a knowledge base, and ask questions
@@ -891,6 +989,13 @@ export default function Home() {
                     {reprocessingId === document.id ? "Working..." : "Reprocess"}
                   </button>
                   <button
+                    className="link-button"
+                    onClick={() => void loadSummaries(document)}
+                    type="button"
+                  >
+                    Summaries
+                  </button>
+                  <button
                     className="secondary-button compact-button"
                     disabled={generatingCardsId === document.id}
                     onClick={() => void generateFlashcards(document)}
@@ -946,6 +1051,66 @@ export default function Home() {
                     <p className="chunk-error">{chunk.embedding_error}</p>
                   ) : null}
                   <p>{chunk.content.slice(0, 420)}</p>
+                </li>
+              ))}
+            </ol>
+          ) : null}
+        </div>
+        <div className="summaries-panel">
+          <div className="summaries-heading">
+            <h2>
+              Summaries
+              {summaryDocument ? `: ${summaryDocument.filename}` : ""}
+            </h2>
+            <div className="summary-controls">
+              <div className="segmented-control" role="group" aria-label="Summary mode">
+                <button
+                  className={summaryMode === "brief" ? "active" : ""}
+                  onClick={() => setSummaryMode("brief")}
+                  type="button"
+                >
+                  Brief
+                </button>
+                <button
+                  className={summaryMode === "detailed" ? "active" : ""}
+                  onClick={() => setSummaryMode("detailed")}
+                  type="button"
+                >
+                  Detailed
+                </button>
+              </div>
+              <button
+                className="primary-button"
+                disabled={
+                  !summaryDocument || generatingSummaryId === summaryDocument.id
+                }
+                onClick={() =>
+                  summaryDocument && void generateSummary(summaryDocument)
+                }
+                type="button"
+              >
+                {summaryDocument && generatingSummaryId === summaryDocument.id
+                  ? "Generating..."
+                  : "Generate Summary"}
+              </button>
+            </div>
+          </div>
+          <p className="health-message">{summaryMessage}</p>
+          {summaries.length > 0 ? (
+            <ol className="summaries-list">
+              {summaries.map((summary) => (
+                <li key={summary.id}>
+                  <article className="summary-entry">
+                    <div className="summary-meta">
+                      <strong>{summary.mode}</strong>
+                      <span>{summary.source_chunk_count} chunks</span>
+                      <span>{summary.model_call_count} model calls</span>
+                      <span>{new Date(summary.created_at).toLocaleString()}</span>
+                    </div>
+                    <div className="summary-content">
+                      <ReactMarkdown>{summary.content}</ReactMarkdown>
+                    </div>
+                  </article>
                 </li>
               ))}
             </ol>

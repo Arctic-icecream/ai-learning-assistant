@@ -64,6 +64,23 @@ class Flashcard(Base):
     )
 
 
+class DocumentSummary(Base):
+    __tablename__ = "document_summaries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    document_id: Mapped[int] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    mode: Mapped[str] = mapped_column(String(20), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    model_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    source_chunk_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    model_call_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+
+
 class QuizQuestion(Base):
     __tablename__ = "quiz_questions"
 

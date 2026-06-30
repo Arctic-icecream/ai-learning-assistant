@@ -2,6 +2,7 @@ from pathlib import Path
 import csv
 import io
 import json
+from typing import Literal
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
@@ -19,10 +20,17 @@ from .document_parser import (
     extract_document_text,
 )
 from .embeddings import create_embedding
-from .llm import generate_answer, generate_flashcards, generate_quiz_questions
+from .llm import (
+    CHAT_MODEL,
+    generate_answer,
+    generate_document_summary,
+    generate_flashcards,
+    generate_quiz_questions,
+)
 from .models import (
     Document,
     DocumentChunk,
+    DocumentSummary,
     Flashcard,
     QuizAttempt,
     QuizQuestion,
@@ -75,6 +83,10 @@ class WebImportRequest(BaseModel):
     url: str = Field(min_length=1, max_length=2048)
 
 
+class SummaryGenerateRequest(BaseModel):
+    mode: Literal["brief", "detailed"] = "brief"
+
+
 def vector_literal(vector: list[float]) -> str:
     return "[" + ",".join(str(value) for value in vector) + "]"
 
@@ -122,6 +134,7 @@ def process_document(document: Document, db: Session) -> None:
         )
     db.query(QuizAttempt).filter(QuizAttempt.document_id == document.id).delete()
     db.query(DocumentChunk).filter(DocumentChunk.document_id == document.id).delete()
+    db.query(DocumentSummary).filter(DocumentSummary.document_id == document.id).delete()
     db.query(Flashcard).filter(Flashcard.document_id == document.id).delete()
     db.query(QuizQuestion).filter(QuizQuestion.document_id == document.id).delete()
 
@@ -391,6 +404,73 @@ def quiz_question_response(question: QuizQuestion) -> dict[str, object]:
         "explanation": question.explanation,
         "created_at": question.created_at.isoformat(),
     }
+
+
+def summary_response(summary: DocumentSummary) -> dict[str, object]:
+    return {
+        "id": summary.id,
+        "document_id": summary.document_id,
+        "mode": summary.mode,
+        "content": summary.content,
+        "model_name": summary.model_name,
+        "source_chunk_count": summary.source_chunk_count,
+        "model_call_count": summary.model_call_count,
+        "created_at": summary.created_at.isoformat(),
+    }
+
+
+@app.get("/documents/{document_id}/summaries")
+def list_document_summaries(
+    document_id: int, db: Session = Depends(get_db)
+) -> list[dict[str, object]]:
+    document = db.get(Document, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    summaries = (
+        db.query(DocumentSummary)
+        .filter(DocumentSummary.document_id == document_id)
+        .order_by(DocumentSummary.created_at.desc())
+        .all()
+    )
+    return [summary_response(summary) for summary in summaries]
+
+
+@app.post("/documents/{document_id}/summaries/generate")
+def generate_summary(
+    document_id: int,
+    request: SummaryGenerateRequest,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    document = db.get(Document, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    chunks = (
+        db.query(DocumentChunk)
+        .filter(DocumentChunk.document_id == document_id)
+        .order_by(DocumentChunk.chunk_index.asc())
+        .all()
+    )
+    if not chunks:
+        raise HTTPException(status_code=400, detail="Document has no chunks")
+
+    content, model_call_count = generate_document_summary(
+        [chunk.content for chunk in chunks], request.mode
+    )
+    summary = DocumentSummary(
+        document_id=document_id,
+        mode=request.mode,
+        content=content,
+        model_name=CHAT_MODEL,
+        source_chunk_count=len(chunks),
+        model_call_count=model_call_count,
+    )
+    db.add(summary)
+    db.commit()
+    db.refresh(summary)
+
+    return summary_response(summary)
 
 
 def normalize_quiz_answer(answer: str) -> str:

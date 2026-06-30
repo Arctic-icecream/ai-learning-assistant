@@ -94,5 +94,6 @@ Open:
 3. Split the text into chunks.
 4. Store chunks and embeddings.
 5. Ask questions using RAG.
-6. Generate flashcards and exam questions.
-7. Complete and save quiz attempts.
+6. Generate brief or detailed document summaries.
+7. Generate flashcards and exam questions.
+8. Complete and save quiz attempts.

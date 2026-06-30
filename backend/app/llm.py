@@ -7,6 +7,8 @@ import httpx
 from .embeddings import OLLAMA_URL
 
 CHAT_MODEL = os.getenv("CHAT_MODEL", "qwen3-coder:30b")
+SUMMARY_MAP_CHUNKS = 6
+SUMMARY_REDUCE_ITEMS = 8
 
 
 def generate_answer(question: str, context: str) -> str:
@@ -161,3 +163,107 @@ JSON array:"""
         raise ValueError("No valid quiz questions were generated")
 
     return normalized_questions
+
+
+def request_local_model(prompt: str, timeout: int = 300) -> str:
+    response = httpx.post(
+        f"{OLLAMA_URL}/api/generate",
+        json={
+            "model": CHAT_MODEL,
+            "prompt": prompt,
+            "stream": False,
+        },
+        timeout=timeout,
+    )
+    response.raise_for_status()
+    return response.json()["response"].strip()
+
+
+def group_items(items: list[str], group_size: int) -> list[list[str]]:
+    if group_size < 1:
+        raise ValueError("group_size must be positive")
+    return [items[index:index + group_size] for index in range(0, len(items), group_size)]
+
+
+def summarize_source_batch(chunks: list[str]) -> str:
+    context = "\n\n".join(
+        f"Chunk {index + 1}:\n{chunk}" for index, chunk in enumerate(chunks)
+    )
+    prompt = f"""Summarize this portion of a learning document using only the provided text.
+
+Preserve important definitions, relationships, examples, and qualifications.
+Do not add outside facts. Write compact factual notes in the source language.
+
+Document portion:
+{context}
+
+Factual notes:"""
+    return request_local_model(prompt)
+
+
+def reduce_summary_notes(notes: list[str]) -> str:
+    context = "\n\n".join(
+        f"Note set {index + 1}:\n{note}" for index, note in enumerate(notes)
+    )
+    prompt = f"""Merge these notes from one learning document into a smaller coherent set of notes.
+
+Remove repetition while preserving important definitions, relationships, examples, and qualifications.
+Use only the supplied notes and write in their language.
+
+Notes:
+{context}
+
+Merged notes:"""
+    return request_local_model(prompt)
+
+
+def write_final_summary(notes: list[str], mode: str) -> str:
+    context = "\n\n".join(notes)
+    if mode == "brief":
+        format_instructions = """Create a concise Markdown study summary with:
+- a short overview paragraph
+- 5 to 8 key bullet points
+- a short review checklist"""
+    else:
+        format_instructions = """Create a detailed Markdown study summary with:
+- an overview
+- clearly titled sections for the main concepts
+- important definitions, relationships, examples, and qualifications
+- a final review checklist"""
+
+    prompt = f"""{format_instructions}
+
+Use only the supplied document notes. Do not add outside facts.
+Write in the same language as the notes. Do not wrap the result in a code fence.
+
+Document notes:
+{context}
+
+Final summary:"""
+    return request_local_model(prompt)
+
+
+def generate_document_summary(chunks: list[str], mode: str) -> tuple[str, int]:
+    if not chunks:
+        raise ValueError("Cannot summarize an empty document")
+    if mode not in {"brief", "detailed"}:
+        raise ValueError("Summary mode must be brief or detailed")
+
+    model_call_count = 0
+    if len(chunks) <= SUMMARY_MAP_CHUNKS:
+        return write_final_summary(chunks, mode), 1
+
+    notes = []
+    for batch in group_items(chunks, SUMMARY_MAP_CHUNKS):
+        notes.append(summarize_source_batch(batch))
+        model_call_count += 1
+
+    while len(notes) > SUMMARY_REDUCE_ITEMS:
+        reduced_notes = []
+        for batch in group_items(notes, SUMMARY_REDUCE_ITEMS):
+            reduced_notes.append(reduce_summary_notes(batch))
+            model_call_count += 1
+        notes = reduced_notes
+
+    summary = write_final_summary(notes, mode)
+    return summary, model_call_count + 1
