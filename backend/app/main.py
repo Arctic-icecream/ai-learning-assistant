@@ -25,11 +25,13 @@ from .llm import (
     generate_answer,
     generate_document_summary,
     generate_flashcards,
+    generate_mind_map,
     generate_quiz_questions,
 )
 from .models import (
     Document,
     DocumentChunk,
+    DocumentMindMap,
     DocumentSummary,
     Flashcard,
     QuizAttempt,
@@ -134,6 +136,7 @@ def process_document(document: Document, db: Session) -> None:
         )
     db.query(QuizAttempt).filter(QuizAttempt.document_id == document.id).delete()
     db.query(DocumentChunk).filter(DocumentChunk.document_id == document.id).delete()
+    db.query(DocumentMindMap).filter(DocumentMindMap.document_id == document.id).delete()
     db.query(DocumentSummary).filter(DocumentSummary.document_id == document.id).delete()
     db.query(Flashcard).filter(Flashcard.document_id == document.id).delete()
     db.query(QuizQuestion).filter(QuizQuestion.document_id == document.id).delete()
@@ -417,6 +420,80 @@ def summary_response(summary: DocumentSummary) -> dict[str, object]:
         "model_call_count": summary.model_call_count,
         "created_at": summary.created_at.isoformat(),
     }
+
+
+def mind_map_response(mind_map: DocumentMindMap) -> dict[str, object]:
+    return {
+        "id": mind_map.id,
+        "document_id": mind_map.document_id,
+        "summary_id": mind_map.summary_id,
+        "tree": mind_map.tree,
+        "model_name": mind_map.model_name,
+        "node_count": mind_map.node_count,
+        "created_at": mind_map.created_at.isoformat(),
+    }
+
+
+@app.get("/documents/{document_id}/mind-maps")
+def list_document_mind_maps(
+    document_id: int, db: Session = Depends(get_db)
+) -> list[dict[str, object]]:
+    document = db.get(Document, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    mind_maps = (
+        db.query(DocumentMindMap)
+        .filter(DocumentMindMap.document_id == document_id)
+        .order_by(DocumentMindMap.created_at.desc())
+        .all()
+    )
+    return [mind_map_response(mind_map) for mind_map in mind_maps]
+
+
+@app.post("/documents/{document_id}/mind-maps/generate")
+def generate_document_mind_map(
+    document_id: int, db: Session = Depends(get_db)
+) -> dict[str, object]:
+    document = db.get(Document, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    summary = (
+        db.query(DocumentSummary)
+        .filter(
+            DocumentSummary.document_id == document_id,
+            DocumentSummary.mode == "detailed",
+        )
+        .order_by(DocumentSummary.created_at.desc())
+        .first()
+    )
+    if summary is None:
+        summary = (
+            db.query(DocumentSummary)
+            .filter(DocumentSummary.document_id == document_id)
+            .order_by(DocumentSummary.created_at.desc())
+            .first()
+        )
+    if summary is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Generate a document summary before creating a mind map",
+        )
+
+    tree, node_count = generate_mind_map(summary.content)
+    mind_map = DocumentMindMap(
+        document_id=document_id,
+        summary_id=summary.id,
+        tree=tree,
+        model_name=CHAT_MODEL,
+        node_count=node_count,
+    )
+    db.add(mind_map)
+    db.commit()
+    db.refresh(mind_map)
+
+    return mind_map_response(mind_map)
 
 
 @app.get("/documents/{document_id}/summaries")

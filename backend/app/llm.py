@@ -9,6 +9,9 @@ from .embeddings import OLLAMA_URL
 CHAT_MODEL = os.getenv("CHAT_MODEL", "qwen3-coder:30b")
 SUMMARY_MAP_CHUNKS = 6
 SUMMARY_REDUCE_ITEMS = 8
+MIND_MAP_MAX_DEPTH = 4
+MIND_MAP_MAX_CHILDREN = 5
+MIND_MAP_MAX_NODES = 40
 
 
 def generate_answer(question: str, context: str) -> str:
@@ -52,6 +55,22 @@ def extract_json_array(text: str) -> list[dict[str, str]]:
     if not isinstance(data, list):
         raise ValueError("Flashcard response must be a JSON array")
 
+    return data
+
+
+def extract_json_object(text: str) -> dict[str, object]:
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:json)?", "", cleaned).strip()
+        cleaned = re.sub(r"```$", "", cleaned).strip()
+
+    match = re.search(r"\{[\s\S]*\}", cleaned)
+    if not match:
+        raise ValueError("Model did not return a JSON object")
+
+    data = json.loads(match.group(0))
+    if not isinstance(data, dict):
+        raise ValueError("Mind map response must be a JSON object")
     return data
 
 
@@ -267,3 +286,66 @@ def generate_document_summary(chunks: list[str], mode: str) -> tuple[str, int]:
 
     summary = write_final_summary(notes, mode)
     return summary, model_call_count + 1
+
+
+def normalize_mind_map_tree(raw_tree: object) -> tuple[dict[str, object], int]:
+    node_count = 0
+
+    def normalize_node(raw_node: object, depth: int) -> dict[str, object]:
+        nonlocal node_count
+        if not isinstance(raw_node, dict):
+            raise ValueError("Every mind map node must be an object")
+
+        title = str(raw_node.get("title", "")).strip()
+        if not title:
+            raise ValueError("Every mind map node must have a title")
+
+        node_count += 1
+        detail = str(raw_node.get("detail", "")).strip()
+        normalized: dict[str, object] = {
+            "title": title[:80],
+            "detail": detail[:240],
+            "children": [],
+        }
+
+        raw_children = raw_node.get("children", [])
+        if not isinstance(raw_children, list):
+            raise ValueError("Mind map children must be an array")
+
+        children: list[dict[str, object]] = []
+        if depth < MIND_MAP_MAX_DEPTH:
+            for child in raw_children[:MIND_MAP_MAX_CHILDREN]:
+                if node_count >= MIND_MAP_MAX_NODES:
+                    break
+                children.append(normalize_node(child, depth + 1))
+        normalized["children"] = children
+        return normalized
+
+    tree = normalize_node(raw_tree, 1)
+    return tree, node_count
+
+
+def generate_mind_map(summary: str) -> tuple[dict[str, object], int]:
+    prompt = f"""Create a study mind map from this document summary.
+
+Return only one JSON object. Do not include markdown or commentary.
+Use the same language as the summary and only information found in it.
+
+Every node must have exactly these fields:
+- "title": a short label, at most 8 words
+- "detail": one concise explanatory sentence, or an empty string
+- "children": an array of child nodes
+
+Structure rules:
+- one root representing the whole document
+- at most {MIND_MAP_MAX_DEPTH} levels including the root
+- at most {MIND_MAP_MAX_CHILDREN} children per node
+- group related concepts under meaningful parent nodes
+- avoid duplicate concepts
+
+Document summary:
+{summary}
+
+JSON mind map:"""
+    raw_tree = extract_json_object(request_local_model(prompt))
+    return normalize_mind_map_tree(raw_tree)

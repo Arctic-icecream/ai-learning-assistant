@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 from pgvector.sqlalchemy import Vector
 
@@ -76,6 +77,26 @@ class DocumentSummary(Base):
     model_name: Mapped[str] = mapped_column(String(100), nullable=False)
     source_chunk_count: Mapped[int] = mapped_column(Integer, nullable=False)
     model_call_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+
+
+class DocumentMindMap(Base):
+    __tablename__ = "document_mind_maps"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    document_id: Mapped[int] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    summary_id: Mapped[int] = mapped_column(
+        ForeignKey("document_summaries.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    tree: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    model_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    node_count: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, nullable=False
     )

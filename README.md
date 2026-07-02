@@ -95,5 +95,6 @@ Open:
 4. Store chunks and embeddings.
 5. Ask questions using RAG.
 6. Generate brief or detailed document summaries.
-7. Generate flashcards and exam questions.
-8. Complete and save quiz attempts.
+7. Turn summaries into interactive mind maps.
+8. Generate flashcards and exam questions.
+9. Complete and save quiz attempts.

@@ -1,7 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import dynamic from "next/dynamic";
 import ReactMarkdown from "react-markdown";
+import type { MindMapTree } from "@/components/MindMapView";
+
+const MindMapView = dynamic(() => import("@/components/MindMapView"), {
+  ssr: false,
+  loading: () => <p className="health-message">Loading mind map canvas...</p>
+});
 
 type HealthState = {
   status: "idle" | "loading" | "success" | "error";
@@ -119,6 +126,16 @@ type DocumentSummary = {
   created_at: string;
 };
 
+type DocumentMindMap = {
+  id: number;
+  document_id: number;
+  summary_id: number;
+  tree: MindMapTree;
+  model_name: string;
+  node_count: number;
+  created_at: string;
+};
+
 export default function Home() {
   const [health, setHealth] = useState<HealthState>({
     status: "idle",
@@ -183,6 +200,16 @@ export default function Home() {
     useState<DocumentRecord | null>(null);
   const [summaryMode, setSummaryMode] = useState<SummaryMode>("brief");
   const [generatingSummaryId, setGeneratingSummaryId] = useState<number | null>(
+    null
+  );
+  const [mindMaps, setMindMaps] = useState<DocumentMindMap[]>([]);
+  const [mindMapMessage, setMindMapMessage] = useState(
+    "Select a document to view saved mind maps."
+  );
+  const [mindMapDocument, setMindMapDocument] =
+    useState<DocumentRecord | null>(null);
+  const [activeMindMapId, setActiveMindMapId] = useState<number | null>(null);
+  const [generatingMindMapId, setGeneratingMindMapId] = useState<number | null>(
     null
   );
 
@@ -379,6 +406,7 @@ export default function Home() {
     await loadQuiz(document);
     await loadQuizAttempts(document);
     await loadSummaries(document);
+    await loadMindMaps(document);
   }
 
   async function reprocessDocument(document: DocumentRecord) {
@@ -410,6 +438,10 @@ export default function Home() {
       setSummaryDocument(updatedDocument);
       setSummaries([]);
       setSummaryMessage("Summaries were cleared because the document was reprocessed.");
+      setMindMapDocument(updatedDocument);
+      setMindMaps([]);
+      setActiveMindMapId(null);
+      setMindMapMessage("Mind maps were cleared because the document was reprocessed.");
       await loadDocuments();
       await loadChunks(updatedDocument.id);
     } catch (error) {
@@ -673,6 +705,69 @@ export default function Home() {
     }
   }
 
+  async function loadMindMaps(document: DocumentRecord) {
+    setMindMapDocument(document);
+    setMindMapMessage("Loading saved mind maps...");
+
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:8000/documents/${document.id}/mind-maps`
+      );
+
+      if (!response.ok) {
+        throw new Error(`Mind map list failed with ${response.status}`);
+      }
+
+      const data = (await response.json()) as DocumentMindMap[];
+      setMindMaps(data);
+      setActiveMindMapId(data[0]?.id ?? null);
+      setMindMapMessage(
+        data.length === 0
+          ? "No mind maps generated for this document yet."
+          : `${data.length} saved mind map${data.length === 1 ? "" : "s"}.`
+      );
+    } catch (error) {
+      setMindMaps([]);
+      setActiveMindMapId(null);
+      setMindMapMessage(
+        error instanceof Error ? error.message : "Could not load mind maps."
+      );
+    }
+  }
+
+  async function generateMindMap(document: DocumentRecord) {
+    setGeneratingMindMapId(document.id);
+    setMindMapDocument(document);
+    setMindMapMessage(`Generating a mind map for ${document.filename}...`);
+
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:8000/documents/${document.id}/mind-maps/generate`,
+        { method: "POST" }
+      );
+
+      if (!response.ok) {
+        const errorData = (await response.json().catch(() => null)) as {
+          detail?: string;
+        } | null;
+        throw new Error(
+          errorData?.detail ?? `Mind map generation failed with ${response.status}`
+        );
+      }
+
+      const mindMap = (await response.json()) as DocumentMindMap;
+      setMindMaps((currentMindMaps) => [mindMap, ...currentMindMaps]);
+      setActiveMindMapId(mindMap.id);
+      setMindMapMessage(`Mind map saved with ${mindMap.node_count} nodes.`);
+    } catch (error) {
+      setMindMapMessage(
+        error instanceof Error ? error.message : "Could not generate mind map."
+      );
+    } finally {
+      setGeneratingMindMapId(null);
+    }
+  }
+
   function setQuizAnswer(questionId: number, answer: string) {
     setQuizAnswers((currentAnswers) => ({
       ...currentAnswers,
@@ -803,10 +898,13 @@ export default function Home() {
     window.location.href = `http://127.0.0.1:8000/documents/${flashcardDocument.id}/flashcards/export`;
   }
 
+  const activeMindMap =
+    mindMaps.find((mindMap) => mindMap.id === activeMindMapId) ?? null;
+
   return (
     <main className="shell">
       <section className="hero">
-        <p className="eyebrow">Day 15 document summaries</p>
+        <p className="eyebrow">Day 16 interactive mind maps</p>
         <h1>AI Learning Assistant</h1>
         <p className="summary">
           Upload learning materials, build a knowledge base, and ask questions
@@ -996,6 +1094,13 @@ export default function Home() {
                     Summaries
                   </button>
                   <button
+                    className="link-button"
+                    onClick={() => void loadMindMaps(document)}
+                    type="button"
+                  >
+                    Mind Maps
+                  </button>
+                  <button
                     className="secondary-button compact-button"
                     disabled={generatingCardsId === document.id}
                     onClick={() => void generateFlashcards(document)}
@@ -1115,6 +1220,45 @@ export default function Home() {
               ))}
             </ol>
           ) : null}
+        </div>
+        <div className="mind-maps-panel">
+          <div className="mind-maps-heading">
+            <h2>
+              Mind maps
+              {mindMapDocument ? `: ${mindMapDocument.filename}` : ""}
+            </h2>
+            <div className="mind-map-actions">
+              {mindMaps.length > 0 ? (
+                <select
+                  aria-label="Mind map version"
+                  onChange={(event) => setActiveMindMapId(Number(event.target.value))}
+                  value={activeMindMapId ?? ""}
+                >
+                  {mindMaps.map((mindMap) => (
+                    <option key={mindMap.id} value={mindMap.id}>
+                      {new Date(mindMap.created_at).toLocaleString()} - {mindMap.node_count} nodes
+                    </option>
+                  ))}
+                </select>
+              ) : null}
+              <button
+                className="primary-button"
+                disabled={
+                  !mindMapDocument || generatingMindMapId === mindMapDocument.id
+                }
+                onClick={() =>
+                  mindMapDocument && void generateMindMap(mindMapDocument)
+                }
+                type="button"
+              >
+                {mindMapDocument && generatingMindMapId === mindMapDocument.id
+                  ? "Generating..."
+                  : "Generate Mind Map"}
+              </button>
+            </div>
+          </div>
+          <p className="health-message">{mindMapMessage}</p>
+          {activeMindMap ? <MindMapView tree={activeMindMap.tree} /> : null}
         </div>
         <div className="search-panel">
           <h2>Ask your materials</h2>
