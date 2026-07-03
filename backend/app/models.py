@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 from pgvector.sqlalchemy import Vector
@@ -25,6 +25,10 @@ class Document(Base):
     text_char_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     parse_status: Mapped[str] = mapped_column(String(50), default="pending", nullable=False)
     parse_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    page_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    ocr_used: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    ocr_page_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    ocr_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, nullable=False
     )

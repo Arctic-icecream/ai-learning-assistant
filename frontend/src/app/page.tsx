@@ -27,6 +27,10 @@ type UploadedDocument = {
   embedded_count: number;
   source_type: string;
   source_url: string | null;
+  page_count: number;
+  ocr_used: boolean;
+  ocr_page_count: number;
+  ocr_error: string | null;
 };
 
 type UploadState = {
@@ -47,6 +51,10 @@ type DocumentRecord = {
   embedded_count: number;
   source_type: string;
   source_url: string | null;
+  page_count: number;
+  ocr_used: boolean;
+  ocr_page_count: number;
+  ocr_error: string | null;
   created_at: string;
 };
 
@@ -904,7 +912,7 @@ export default function Home() {
   return (
     <main className="shell">
       <section className="hero">
-        <p className="eyebrow">Day 16 interactive mind maps</p>
+        <p className="eyebrow">Day 17 scanned PDF OCR</p>
         <h1>AI Learning Assistant</h1>
         <p className="summary">
           Upload learning materials, build a knowledge base, and ask questions
@@ -970,6 +978,20 @@ export default function Home() {
                 <dt>Text chars</dt>
                 <dd>{upload.document.text_char_count}</dd>
               </div>
+              {upload.document.page_count > 0 ? (
+                <div>
+                  <dt>Pages</dt>
+                  <dd>{upload.document.page_count}</dd>
+                </div>
+              ) : null}
+              {upload.document.page_count > 0 ? (
+                <div>
+                  <dt>OCR pages</dt>
+                  <dd>
+                    {upload.document.ocr_page_count} / {upload.document.page_count}
+                  </dd>
+                </div>
+              ) : null}
               <div>
                 <dt>Chunks</dt>
                 <dd>{upload.document.chunk_count}</dd>
@@ -984,6 +1006,12 @@ export default function Home() {
                 <div>
                   <dt>Parse error</dt>
                   <dd>{upload.document.parse_error}</dd>
+                </div>
+              ) : null}
+              {upload.document.ocr_error ? (
+                <div>
+                  <dt>OCR warning</dt>
+                  <dd>{upload.document.ocr_error}</dd>
                 </div>
               ) : null}
             </dl>
@@ -1064,9 +1092,18 @@ export default function Home() {
                   </div>
                   <span>{document.content_type}</span>
                   <span>{document.size_bytes} bytes</span>
-                  <span className={`parse-status ${document.parse_status}`}>
-                    {document.parse_status}
-                  </span>
+                  <div className="document-status">
+                    <span className={`parse-status ${document.parse_status}`}>
+                      {document.parse_status}
+                    </span>
+                    {document.page_count > 0 ? (
+                      <span>
+                        {document.ocr_used
+                          ? `OCR ${document.ocr_page_count}/${document.page_count}`
+                          : `${document.page_count} pages`}
+                      </span>
+                    ) : null}
+                  </div>
                   <span>{document.text_char_count} chars</span>
                   <button
                     className="link-button"

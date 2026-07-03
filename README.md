@@ -15,6 +15,9 @@ Current document support:
 - PowerPoint Open XML (`.pptx`)
 - Public web pages (`http://` or `https://`)
 
+PDF parsing uses native text extraction first and selectively applies local
+RapidOCR to scanned or low-text pages.
+
 ## Day 1 Goal
 
 Set up the project structure, Git workflow, and minimal frontend/backend skeletons.

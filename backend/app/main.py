@@ -17,7 +17,7 @@ from .database import Base, engine, get_db
 from .document_parser import (
     SUPPORTED_DOCUMENT_EXTENSIONS,
     UnsupportedDocumentTypeError,
-    extract_document_text,
+    parse_document,
 )
 from .embeddings import create_embedding
 from .llm import (
@@ -117,6 +117,10 @@ def document_response(document: Document, db: Session) -> dict[str, object]:
         "parse_status": document.parse_status,
         "text_char_count": document.text_char_count,
         "parse_error": document.parse_error,
+        "page_count": document.page_count,
+        "ocr_used": document.ocr_used,
+        "ocr_page_count": document.ocr_page_count,
+        "ocr_error": document.ocr_error,
         "chunk_count": chunk_count,
         "embedded_count": embedded_count,
         "created_at": document.created_at.isoformat(),
@@ -145,13 +149,22 @@ def process_document(document: Document, db: Session) -> None:
     document.parse_error = None
     document.extracted_text = None
     document.text_char_count = 0
+    document.page_count = 0
+    document.ocr_used = False
+    document.ocr_page_count = 0
+    document.ocr_error = None
 
     storage_path = Path(document.storage_path)
     try:
-        document.extracted_text = extract_document_text(
+        parse_result = parse_document(
             storage_path, document.original_filename
         )
+        document.extracted_text = parse_result.text
         document.text_char_count = len(document.extracted_text)
+        document.page_count = parse_result.page_count
+        document.ocr_used = parse_result.ocr_used
+        document.ocr_page_count = parse_result.ocr_page_count
+        document.ocr_error = parse_result.ocr_error
         document.parse_status = "parsed" if document.extracted_text else "empty"
     except UnsupportedDocumentTypeError as error:
         document.parse_status = "unsupported"
@@ -219,6 +232,24 @@ def ensure_document_parse_columns() -> None:
         )
         connection.execute(
             text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS parse_error TEXT")
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE documents ADD COLUMN IF NOT EXISTS page_count INTEGER NOT NULL DEFAULT 0"
+            )
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE documents ADD COLUMN IF NOT EXISTS ocr_used BOOLEAN NOT NULL DEFAULT FALSE"
+            )
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE documents ADD COLUMN IF NOT EXISTS ocr_page_count INTEGER NOT NULL DEFAULT 0"
+            )
+        )
+        connection.execute(
+            text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS ocr_error TEXT")
         )
         connection.execute(
             text(
