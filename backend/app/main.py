@@ -9,7 +9,7 @@ from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import text
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from .chunker import chunk_text
@@ -19,6 +19,7 @@ from .document_parser import (
     UnsupportedDocumentTypeError,
     parse_document,
 )
+from .document_storage import stage_uploaded_file
 from .embeddings import create_embedding
 from .llm import (
     CHAT_MODEL,
@@ -380,6 +381,88 @@ def list_documents(db: Session = Depends(get_db)) -> list[dict[str, object]]:
         document_response(document, db)
         for document in documents
     ]
+
+
+@app.delete("/documents/{document_id}")
+def delete_document(
+    document_id: int, db: Session = Depends(get_db)
+) -> dict[str, object]:
+    document = db.get(Document, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    try:
+        staged_file = stage_uploaded_file(Path(document.storage_path), UPLOAD_DIR)
+    except (OSError, ValueError) as error:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Could not stage stored file for deletion: {error}",
+        ) from error
+
+    try:
+        db.delete(document)
+        db.commit()
+    except Exception:
+        db.rollback()
+        if staged_file is not None:
+            staged_file.restore()
+        raise
+
+    cleanup_warning = None
+    if staged_file is None:
+        cleanup_warning = "Database record deleted; stored file was already missing"
+    else:
+        try:
+            staged_file.finalize()
+        except OSError as error:
+            cleanup_warning = f"Database record deleted; file cleanup failed: {error}"
+
+    return {
+        "id": document_id,
+        "deleted": True,
+        "file_deleted": staged_file is not None and cleanup_warning is None,
+        "cleanup_warning": cleanup_warning,
+    }
+
+
+@app.get("/storage/stats")
+def storage_stats(db: Session = Depends(get_db)) -> dict[str, int]:
+    document_count = db.query(func.count(Document.id)).scalar() or 0
+    tracked_file_bytes = db.query(func.coalesce(func.sum(Document.size_bytes), 0)).scalar() or 0
+    referenced_files = {
+        stored_filename for (stored_filename,) in db.query(Document.stored_filename).all()
+    }
+
+    actual_upload_bytes = 0
+    orphan_file_count = 0
+    for path in UPLOAD_DIR.iterdir():
+        if not path.is_file() or path.name == ".gitkeep":
+            continue
+        try:
+            actual_upload_bytes += path.stat().st_size
+        except OSError:
+            continue
+        if path.name not in referenced_files:
+            orphan_file_count += 1
+
+    return {
+        "document_count": int(document_count),
+        "tracked_file_bytes": int(tracked_file_bytes),
+        "actual_upload_bytes": actual_upload_bytes,
+        "orphan_file_count": orphan_file_count,
+        "chunk_count": db.query(func.count(DocumentChunk.id)).scalar() or 0,
+        "embedded_chunk_count": (
+            db.query(func.count(DocumentChunk.id))
+            .filter(DocumentChunk.embedding_status == "embedded")
+            .scalar()
+            or 0
+        ),
+        "summary_count": db.query(func.count(DocumentSummary.id)).scalar() or 0,
+        "mind_map_count": db.query(func.count(DocumentMindMap.id)).scalar() or 0,
+        "flashcard_count": db.query(func.count(Flashcard.id)).scalar() or 0,
+        "quiz_question_count": db.query(func.count(QuizQuestion.id)).scalar() or 0,
+        "quiz_attempt_count": db.query(func.count(QuizAttempt.id)).scalar() or 0,
+    }
 
 
 @app.get("/documents/{document_id}/chunks")

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
+import { Trash2, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import type { MindMapTree } from "@/components/MindMapView";
 
@@ -144,6 +145,26 @@ type DocumentMindMap = {
   created_at: string;
 };
 
+type StorageStats = {
+  document_count: number;
+  tracked_file_bytes: number;
+  actual_upload_bytes: number;
+  orphan_file_count: number;
+  chunk_count: number;
+  embedded_chunk_count: number;
+  summary_count: number;
+  mind_map_count: number;
+  flashcard_count: number;
+  quiz_question_count: number;
+  quiz_attempt_count: number;
+};
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export default function Home() {
   const [health, setHealth] = useState<HealthState>({
     status: "idle",
@@ -220,6 +241,12 @@ export default function Home() {
   const [generatingMindMapId, setGeneratingMindMapId] = useState<number | null>(
     null
   );
+  const [storageStats, setStorageStats] = useState<StorageStats | null>(null);
+  const [storageMessage, setStorageMessage] = useState(
+    "Storage statistics have not been loaded yet."
+  );
+  const [deleteTarget, setDeleteTarget] = useState<DocumentRecord | null>(null);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
 
   useEffect(() => {
     void loadDocuments();
@@ -322,10 +349,97 @@ export default function Home() {
           ? "No documents are stored yet."
           : `${data.length} document record${data.length === 1 ? "" : "s"} stored.`
       );
+      await loadStorageStats();
     } catch (error) {
       setDocumentsMessage(
         error instanceof Error ? error.message : "Could not load documents."
       );
+    }
+  }
+
+  async function loadStorageStats() {
+    setStorageMessage("Loading storage statistics...");
+    try {
+      const response = await fetch("http://127.0.0.1:8000/storage/stats");
+      if (!response.ok) {
+        throw new Error(`Storage statistics failed with ${response.status}`);
+      }
+      setStorageStats((await response.json()) as StorageStats);
+      setStorageMessage("Storage statistics loaded.");
+    } catch (error) {
+      setStorageMessage(
+        error instanceof Error ? error.message : "Could not load storage statistics."
+      );
+    }
+  }
+
+  function clearDeletedDocument(documentId: number) {
+    if (selectedDocument?.id === documentId) {
+      setSelectedDocument(null);
+      setChunks([]);
+      setChunksMessage("Select a document to preview chunks.");
+    }
+    if (flashcardDocument?.id === documentId) {
+      setFlashcardDocument(null);
+      setFlashcards([]);
+      setFlashcardsMessage("Select a document to view flashcards.");
+    }
+    if (quizDocument?.id === documentId) {
+      setQuizDocument(null);
+      setQuizQuestions([]);
+      setQuizAnswers({});
+      setQuizAttempts([]);
+      setQuizMessage("Select a document to view quiz questions.");
+    }
+    if (summaryDocument?.id === documentId) {
+      setSummaryDocument(null);
+      setSummaries([]);
+      setSummaryMessage("Select a document to view saved summaries.");
+    }
+    if (mindMapDocument?.id === documentId) {
+      setMindMapDocument(null);
+      setMindMaps([]);
+      setActiveMindMapId(null);
+      setMindMapMessage("Select a document to view saved mind maps.");
+    }
+    if (upload.document?.id === documentId) {
+      setUpload({ status: "idle", message: "No file uploaded yet." });
+    }
+    if (webImport.document?.id === documentId) {
+      setWebImport({ status: "idle", message: "No web page imported yet." });
+    }
+  }
+
+  async function confirmDeleteDocument() {
+    if (!deleteTarget) return;
+
+    setDeletingId(deleteTarget.id);
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:8000/documents/${deleteTarget.id}`,
+        { method: "DELETE" }
+      );
+      const data = (await response.json().catch(() => null)) as {
+        detail?: string;
+        cleanup_warning?: string | null;
+      } | null;
+      if (!response.ok) {
+        throw new Error(data?.detail ?? `Delete failed with ${response.status}`);
+      }
+
+      const deletedFilename = deleteTarget.filename;
+      clearDeletedDocument(deleteTarget.id);
+      setDeleteTarget(null);
+      await loadDocuments();
+      setDocumentsMessage(
+        data?.cleanup_warning ?? `${deletedFilename} and its related data were deleted.`
+      );
+    } catch (error) {
+      setDocumentsMessage(
+        error instanceof Error ? error.message : "Could not delete document."
+      );
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -912,7 +1026,7 @@ export default function Home() {
   return (
     <main className="shell">
       <section className="hero">
-        <p className="eyebrow">Day 17 scanned PDF OCR</p>
+        <p className="eyebrow">Day 18 storage management</p>
         <h1>AI Learning Assistant</h1>
         <p className="summary">
           Upload learning materials, build a knowledge base, and ask questions
@@ -1073,6 +1187,20 @@ export default function Home() {
               Refresh
             </button>
           </div>
+          {storageStats ? (
+            <dl className="storage-stats">
+              <div><dt>Documents</dt><dd>{storageStats.document_count}</dd></div>
+              <div><dt>Tracked files</dt><dd>{formatBytes(storageStats.tracked_file_bytes)}</dd></div>
+              <div><dt>Disk usage</dt><dd>{formatBytes(storageStats.actual_upload_bytes)}</dd></div>
+              <div><dt>Chunks</dt><dd>{storageStats.embedded_chunk_count} / {storageStats.chunk_count}</dd></div>
+              <div><dt>Summaries</dt><dd>{storageStats.summary_count}</dd></div>
+              <div><dt>Mind maps</dt><dd>{storageStats.mind_map_count}</dd></div>
+              <div><dt>Flashcards</dt><dd>{storageStats.flashcard_count}</dd></div>
+              <div><dt>Quiz attempts</dt><dd>{storageStats.quiz_attempt_count}</dd></div>
+              <div><dt>Orphan files</dt><dd>{storageStats.orphan_file_count}</dd></div>
+            </dl>
+          ) : null}
+          <p className="storage-message">{storageMessage}</p>
           <p className="health-message">{documentsMessage}</p>
           {documents.length > 0 ? (
             <ul className="documents-list">
@@ -1166,6 +1294,16 @@ export default function Home() {
                     type="button"
                   >
                     Quiz
+                  </button>
+                  <button
+                    aria-label={`Delete ${document.filename}`}
+                    className="icon-button danger-button"
+                    disabled={deletingId === document.id}
+                    onClick={() => setDeleteTarget(document)}
+                    title="Delete document"
+                    type="button"
+                  >
+                    <Trash2 aria-hidden="true" size={17} />
                   </button>
                   <span>{new Date(document.created_at).toLocaleString()}</span>
                 </li>
@@ -1486,6 +1624,53 @@ export default function Home() {
           ) : null}
         </div>
       </section>
+      {deleteTarget ? (
+        <div className="modal-backdrop" role="presentation">
+          <div
+            aria-labelledby="delete-dialog-title"
+            aria-modal="true"
+            className="delete-dialog"
+            role="dialog"
+          >
+            <div className="dialog-heading">
+              <h2 id="delete-dialog-title">Delete document?</h2>
+              <button
+                aria-label="Close delete dialog"
+                className="icon-button"
+                disabled={deletingId === deleteTarget.id}
+                onClick={() => setDeleteTarget(null)}
+                title="Close"
+                type="button"
+              >
+                <X aria-hidden="true" size={18} />
+              </button>
+            </div>
+            <p>
+              <strong>{deleteTarget.filename}</strong> and all of its chunks,
+              summaries, mind maps, flashcards, and quiz data will be permanently
+              deleted.
+            </p>
+            <div className="dialog-actions">
+              <button
+                className="secondary-button"
+                disabled={deletingId === deleteTarget.id}
+                onClick={() => setDeleteTarget(null)}
+                type="button"
+              >
+                Cancel
+              </button>
+              <button
+                className="danger-action"
+                disabled={deletingId === deleteTarget.id}
+                onClick={() => void confirmDeleteDocument()}
+                type="button"
+              >
+                {deletingId === deleteTarget.id ? "Deleting..." : "Delete permanently"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }

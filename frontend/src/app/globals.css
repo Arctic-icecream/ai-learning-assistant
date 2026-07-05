@@ -202,9 +202,45 @@ h2 {
   list-style: none;
 }
 
+.storage-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid #d8dee8;
+  border-radius: 8px;
+  background: #d8dee8;
+}
+
+.storage-stats div {
+  display: grid;
+  gap: 4px;
+  min-height: 72px;
+  padding: 12px;
+  background: #ffffff;
+}
+
+.storage-stats dt,
+.storage-message {
+  color: #4f5b67;
+  font-size: 13px;
+}
+
+.storage-stats dd {
+  margin: 0;
+  color: #17202a;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.storage-message {
+  margin: 0;
+}
+
 .documents-list li {
   display: grid;
-  grid-template-columns: minmax(160px, 1.4fr) minmax(120px, 0.8fr) minmax(90px, 0.5fr) minmax(80px, 0.5fr) minmax(90px, 0.5fr) minmax(100px, 0.5fr) minmax(110px, 0.5fr) minmax(100px, 0.5fr) minmax(75px, 0.4fr) minmax(80px, 0.4fr) minmax(120px, 0.6fr) minmax(60px, 0.3fr) minmax(110px, 0.5fr) minmax(50px, 0.3fr) minmax(160px, 0.8fr);
+  grid-template-columns: minmax(160px, 1.4fr) minmax(120px, 0.8fr) minmax(90px, 0.5fr) minmax(80px, 0.5fr) minmax(90px, 0.5fr) minmax(100px, 0.5fr) minmax(110px, 0.5fr) minmax(100px, 0.5fr) minmax(75px, 0.4fr) minmax(80px, 0.4fr) minmax(120px, 0.6fr) minmax(60px, 0.3fr) minmax(110px, 0.5fr) minmax(50px, 0.3fr) 38px minmax(160px, 0.8fr);
   gap: 12px;
   align-items: center;
   padding: 12px 0;
@@ -284,6 +320,80 @@ h2 {
   font: inherit;
   font-weight: 700;
   text-align: left;
+}
+
+.icon-button {
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid #c7d0dd;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #4f5b67;
+  cursor: pointer;
+}
+
+.icon-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.danger-button {
+  color: #b42318;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgb(23 32 42 / 48%);
+}
+
+.delete-dialog {
+  display: grid;
+  gap: 18px;
+  width: min(460px, 100%);
+  padding: 22px;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 20px 50px rgb(23 32 42 / 24%);
+}
+
+.dialog-heading,
+.dialog-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.delete-dialog p {
+  margin: 0;
+  color: #4f5b67;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.danger-action {
+  min-height: 40px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 6px;
+  background: #b42318;
+  color: #ffffff;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+}
+
+.danger-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 
 .chunks-panel {
@@ -801,6 +911,10 @@ h2 {
 }
 
 @media (max-width: 720px) {
+  .storage-stats {
+    grid-template-columns: 1fr 1fr;
+  }
+
   .documents-list li {
     grid-template-columns: 1fr;
   }

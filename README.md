@@ -101,3 +101,4 @@ Open:
 7. Turn summaries into interactive mind maps.
 8. Generate flashcards and exam questions.
 9. Complete and save quiz attempts.
+10. Inspect storage usage and delete individual documents with related data.
