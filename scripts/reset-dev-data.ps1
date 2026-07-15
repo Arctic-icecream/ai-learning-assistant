@@ -8,7 +8,7 @@ Push-Location $Root
 docker compose exec -T postgres psql `
   -U ai_learning_user `
   -d ai_learning_assistant `
-  -c "TRUNCATE TABLE quiz_responses, quiz_attempts, quiz_questions, document_mind_maps, document_summaries, flashcards, document_chunks, documents RESTART IDENTITY;"
+  -c "TRUNCATE TABLE processing_jobs, quiz_responses, quiz_attempts, quiz_questions, document_mind_maps, document_summaries, flashcards, document_chunks, documents RESTART IDENTITY;"
 Pop-Location
 
 Write-Host "Removing uploaded test files..."

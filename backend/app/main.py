@@ -5,19 +5,16 @@ import json
 from typing import Literal
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
-from .chunker import chunk_text
-from .database import Base, engine, get_db
+from .database import Base, SessionLocal, engine, get_db
 from .document_parser import (
     SUPPORTED_DOCUMENT_EXTENSIONS,
-    UnsupportedDocumentTypeError,
-    parse_document,
 )
 from .document_storage import stage_uploaded_file
 from .embeddings import create_embedding
@@ -35,9 +32,15 @@ from .models import (
     DocumentMindMap,
     DocumentSummary,
     Flashcard,
+    ProcessingJob,
     QuizAttempt,
     QuizQuestion,
     QuizResponse,
+)
+from .processing import (
+    calculate_job_percent,
+    mark_interrupted_jobs,
+    run_document_processing_job,
 )
 from .web_parser import WebImportError, fetch_web_page
 
@@ -128,79 +131,52 @@ def document_response(document: Document, db: Session) -> dict[str, object]:
     }
 
 
-def process_document(document: Document, db: Session) -> None:
-    attempt_ids = [
-        attempt_id
-        for (attempt_id,) in db.query(QuizAttempt.id)
-        .filter(QuizAttempt.document_id == document.id)
-        .all()
-    ]
-    if attempt_ids:
-        db.query(QuizResponse).filter(QuizResponse.attempt_id.in_(attempt_ids)).delete(
-            synchronize_session=False
-        )
-    db.query(QuizAttempt).filter(QuizAttempt.document_id == document.id).delete()
-    db.query(DocumentChunk).filter(DocumentChunk.document_id == document.id).delete()
-    db.query(DocumentMindMap).filter(DocumentMindMap.document_id == document.id).delete()
-    db.query(DocumentSummary).filter(DocumentSummary.document_id == document.id).delete()
-    db.query(Flashcard).filter(Flashcard.document_id == document.id).delete()
-    db.query(QuizQuestion).filter(QuizQuestion.document_id == document.id).delete()
+def job_response(job: ProcessingJob) -> dict[str, object]:
+    return {
+        "id": job.id,
+        "document_id": job.document_id,
+        "job_type": job.job_type,
+        "status": job.status,
+        "stage": job.stage,
+        "message": job.message,
+        "progress_current": job.progress_current,
+        "progress_total": job.progress_total,
+        "percent": calculate_job_percent(
+            job.progress_current, job.progress_total, job.status
+        ),
+        "error": job.error,
+        "created_at": job.created_at.isoformat(),
+        "started_at": job.started_at.isoformat() if job.started_at else None,
+        "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+    }
 
-    document.parse_status = "skipped"
-    document.parse_error = None
-    document.extracted_text = None
-    document.text_char_count = 0
-    document.page_count = 0
-    document.ocr_used = False
-    document.ocr_page_count = 0
-    document.ocr_error = None
 
-    storage_path = Path(document.storage_path)
-    try:
-        parse_result = parse_document(
-            storage_path, document.original_filename
-        )
-        document.extracted_text = parse_result.text
-        document.text_char_count = len(document.extracted_text)
-        document.page_count = parse_result.page_count
-        document.ocr_used = parse_result.ocr_used
-        document.ocr_page_count = parse_result.ocr_page_count
-        document.ocr_error = parse_result.ocr_error
-        document.parse_status = "parsed" if document.extracted_text else "empty"
-    except UnsupportedDocumentTypeError as error:
-        document.parse_status = "unsupported"
-        document.parse_error = str(error)
-    except Exception as error:
-        document.parse_status = "failed"
-        document.parse_error = str(error)
-
+def create_processing_job(
+    document: Document,
+    db: Session,
+    background_tasks: BackgroundTasks,
+    job_type: str,
+) -> ProcessingJob:
+    document.parse_status = "queued"
     db.add(document)
+    db.flush()
+
+    job = ProcessingJob(
+        document_id=document.id,
+        job_type=job_type,
+        status="queued",
+        stage="queued",
+        message="Document processing has been queued.",
+        progress_current=0,
+        progress_total=1,
+    )
+    db.add(job)
     db.commit()
     db.refresh(document)
+    db.refresh(job)
 
-    if document.parse_status != "parsed" or not document.extracted_text:
-        return
-
-    chunk_records = []
-    for index, chunk in enumerate(chunk_text(document.extracted_text)):
-        chunk_record = DocumentChunk(
-            document_id=document.id,
-            chunk_index=index,
-            content=chunk,
-            char_count=len(chunk),
-        )
-
-        try:
-            chunk_record.embedding = create_embedding(chunk)
-            chunk_record.embedding_status = "embedded"
-        except Exception as error:
-            chunk_record.embedding_status = "failed"
-            chunk_record.embedding_error = str(error)
-
-        chunk_records.append(chunk_record)
-
-    db.add_all(chunk_records)
-    db.commit()
+    background_tasks.add_task(run_document_processing_job, document.id, job.id)
+    return job
 
 
 @app.on_event("startup")
@@ -209,6 +185,12 @@ def create_tables() -> None:
     Base.metadata.create_all(bind=engine)
     ensure_document_parse_columns()
     ensure_chunk_embedding_columns()
+    ensure_processing_job_columns()
+    db = SessionLocal()
+    try:
+        mark_interrupted_jobs(db)
+    finally:
+        db.close()
 
 
 def ensure_vector_extension() -> None:
@@ -277,13 +259,61 @@ def ensure_chunk_embedding_columns() -> None:
         )
 
 
+def ensure_processing_job_columns() -> None:
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "ALTER TABLE processing_jobs ADD COLUMN IF NOT EXISTS job_type VARCHAR(50) NOT NULL DEFAULT 'document_processing'"
+            )
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE processing_jobs ADD COLUMN IF NOT EXISTS status VARCHAR(50) NOT NULL DEFAULT 'queued'"
+            )
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE processing_jobs ADD COLUMN IF NOT EXISTS stage VARCHAR(80) NOT NULL DEFAULT 'queued'"
+            )
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE processing_jobs ADD COLUMN IF NOT EXISTS message TEXT NOT NULL DEFAULT 'Waiting to start.'"
+            )
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE processing_jobs ADD COLUMN IF NOT EXISTS progress_current INTEGER NOT NULL DEFAULT 0"
+            )
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE processing_jobs ADD COLUMN IF NOT EXISTS progress_total INTEGER NOT NULL DEFAULT 1"
+            )
+        )
+        connection.execute(
+            text("ALTER TABLE processing_jobs ADD COLUMN IF NOT EXISTS error TEXT")
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE processing_jobs ADD COLUMN IF NOT EXISTS started_at TIMESTAMP"
+            )
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE processing_jobs ADD COLUMN IF NOT EXISTS completed_at TIMESTAMP"
+            )
+        )
+
+
 @app.get("/health")
 def health_check() -> dict[str, str]:
     return {"status": "it's alive! we are good to go!"}
 
 
-@app.post("/documents/upload")
+@app.post("/documents/upload", status_code=202)
 async def upload_document(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
@@ -313,14 +343,15 @@ async def upload_document(
     db.add(document)
     db.commit()
     db.refresh(document)
-    process_document(document, db)
+    job = create_processing_job(document, db, background_tasks, "upload")
 
-    return document_response(document, db)
+    return {"document": document_response(document, db), "job": job_response(job)}
 
 
-@app.post("/documents/import-url")
+@app.post("/documents/import-url", status_code=202)
 def import_web_page(
     request: WebImportRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
     try:
@@ -351,14 +382,16 @@ def import_web_page(
     db.add(document)
     db.commit()
     db.refresh(document)
-    process_document(document, db)
+    job = create_processing_job(document, db, background_tasks, "web_import")
 
-    return document_response(document, db)
+    return {"document": document_response(document, db), "job": job_response(job)}
 
 
-@app.post("/documents/{document_id}/reprocess")
+@app.post("/documents/{document_id}/reprocess", status_code=202)
 def reprocess_document(
-    document_id: int, db: Session = Depends(get_db)
+    document_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
 ) -> dict[str, object]:
     document = db.get(Document, document_id)
     if document is None:
@@ -367,10 +400,30 @@ def reprocess_document(
     if not Path(document.storage_path).exists():
         raise HTTPException(status_code=404, detail="Stored file not found")
 
-    process_document(document, db)
-    db.refresh(document)
+    active_job = (
+        db.query(ProcessingJob)
+        .filter(
+            ProcessingJob.document_id == document_id,
+            ProcessingJob.status.in_(["queued", "running"]),
+        )
+        .order_by(ProcessingJob.created_at.desc())
+        .first()
+    )
+    if active_job is not None:
+        return {"document": document_response(document, db), "job": job_response(active_job)}
 
-    return document_response(document, db)
+    job = create_processing_job(document, db, background_tasks, "reprocess")
+
+    return {"document": document_response(document, db), "job": job_response(job)}
+
+
+@app.get("/jobs/{job_id}")
+def get_processing_job(job_id: int, db: Session = Depends(get_db)) -> dict[str, object]:
+    job = db.get(ProcessingJob, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Processing job not found")
+
+    return job_response(job)
 
 
 @app.get("/documents")
@@ -462,6 +515,7 @@ def storage_stats(db: Session = Depends(get_db)) -> dict[str, int]:
         "flashcard_count": db.query(func.count(Flashcard.id)).scalar() or 0,
         "quiz_question_count": db.query(func.count(QuizQuestion.id)).scalar() or 0,
         "quiz_attempt_count": db.query(func.count(QuizAttempt.id)).scalar() or 0,
+        "processing_job_count": db.query(func.count(ProcessingJob.id)).scalar() or 0,
     }
 
 

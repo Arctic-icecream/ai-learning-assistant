@@ -283,6 +283,11 @@ h2 {
   color: #1b7f4c;
 }
 
+.parse-status.queued,
+.parse-status.processing {
+  color: #3046b7;
+}
+
 .parse-status.failed {
   color: #b42318;
 }
@@ -308,6 +313,64 @@ h2 {
 
 .embedding-status.pending {
   color: #8a5a00;
+}
+
+.job-progress {
+  display: grid;
+  gap: 7px;
+  padding: 12px;
+  border: 1px solid #c7d0dd;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.job-progress-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #17202a;
+  font-size: 13px;
+  text-transform: uppercase;
+}
+
+.progress-track {
+  height: 9px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e3e8ef;
+}
+
+.progress-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #4263eb;
+  transition: width 180ms ease;
+}
+
+.job-progress.completed .progress-track span {
+  background: #1b7f4c;
+}
+
+.job-progress.failed .progress-track span {
+  background: #b42318;
+}
+
+.job-progress p {
+  margin: 0;
+  color: #4f5b67;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.job-progress .job-error {
+  color: #b42318;
+  font-weight: 700;
+}
+
+.document-job {
+  grid-column: 1 / -1;
 }
 
 .link-button {

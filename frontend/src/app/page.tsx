@@ -32,12 +32,35 @@ type UploadedDocument = {
   ocr_used: boolean;
   ocr_page_count: number;
   ocr_error: string | null;
+  created_at: string;
 };
 
 type UploadState = {
   status: "idle" | "loading" | "success" | "error";
   message: string;
   document?: UploadedDocument;
+  job?: ProcessingJob;
+};
+
+type ProcessingJob = {
+  id: number;
+  document_id: number;
+  job_type: string;
+  status: "queued" | "running" | "completed" | "failed";
+  stage: string;
+  message: string;
+  progress_current: number;
+  progress_total: number;
+  percent: number;
+  error: string | null;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+};
+
+type ProcessingJobResponse = {
+  document: UploadedDocument;
+  job: ProcessingJob;
 };
 
 type DocumentRecord = {
@@ -157,6 +180,7 @@ type StorageStats = {
   flashcard_count: number;
   quiz_question_count: number;
   quiz_attempt_count: number;
+  processing_job_count: number;
 };
 
 function formatBytes(bytes: number): string {
@@ -180,6 +204,7 @@ export default function Home() {
     status: "idle",
     message: "No web page imported yet."
   });
+  const [activeJobs, setActiveJobs] = useState<Record<number, ProcessingJob>>({});
   const [documents, setDocuments] = useState<DocumentRecord[]>([]);
   const [documentsMessage, setDocumentsMessage] = useState(
     "Document list has not been loaded yet."
@@ -252,6 +277,104 @@ export default function Home() {
     void loadDocuments();
   }, []);
 
+  useEffect(() => {
+    const activeJobIds = Object.keys(activeJobs);
+    if (activeJobIds.length === 0) return;
+
+    const intervalId = window.setInterval(() => {
+      void refreshActiveJobs();
+    }, 1000);
+
+    return () => window.clearInterval(intervalId);
+  }, [activeJobs]);
+
+  function trackJob(job: ProcessingJob) {
+    setActiveJobs((currentJobs) => ({
+      ...currentJobs,
+      [job.id]: job
+    }));
+  }
+
+  async function refreshActiveJobs() {
+    const jobs = Object.values(activeJobs);
+    if (jobs.length === 0) return;
+
+    const latestJobs = await Promise.all(
+      jobs.map(async (job) => {
+        const response = await fetch(`http://127.0.0.1:8000/jobs/${job.id}`);
+        if (!response.ok) return job;
+        return (await response.json()) as ProcessingJob;
+      })
+    );
+
+    const nextJobs: Record<number, ProcessingJob> = {};
+    let shouldRefreshDocuments = false;
+    for (const job of latestJobs) {
+      if (job.status === "completed" || job.status === "failed") {
+        shouldRefreshDocuments = true;
+      } else {
+        nextJobs[job.id] = job;
+      }
+    }
+
+    setActiveJobs(nextJobs);
+    setUpload((currentUpload) => {
+      const matchingJob = latestJobs.find((job) => job.id === currentUpload.job?.id);
+      return matchingJob ? { ...currentUpload, job: matchingJob } : currentUpload;
+    });
+    setWebImport((currentImport) => {
+      const matchingJob = latestJobs.find((job) => job.id === currentImport.job?.id);
+      return matchingJob ? { ...currentImport, job: matchingJob } : currentImport;
+    });
+
+    if (shouldRefreshDocuments) {
+      await loadDocuments();
+      for (const job of latestJobs) {
+        if (job.status === "completed") {
+          await loadChunks(job.document_id);
+        }
+      }
+    }
+  }
+
+  function jobForDocument(documentId: number) {
+    return Object.values(activeJobs).find(
+      (job) =>
+        job.document_id === documentId &&
+        (job.status === "queued" || job.status === "running")
+    );
+  }
+
+  function renderJobProgress(job: ProcessingJob | undefined) {
+    if (!job) return null;
+
+    return (
+      <div className={`job-progress ${job.status}`}>
+        <div className="job-progress-header">
+          <strong>{job.stage}</strong>
+          <span>{job.percent}%</span>
+        </div>
+        <div
+          aria-label={`${job.stage} progress`}
+          aria-valuemax={100}
+          aria-valuemin={0}
+          aria-valuenow={job.percent}
+          className="progress-track"
+          role="progressbar"
+        >
+          <span style={{ width: `${job.percent}%` }} />
+        </div>
+        <p>
+          {job.message}
+          {job.progress_total > 1
+            ? ` (${job.progress_current}/${job.progress_total})`
+            : ""}
+        </p>
+        {job.error ? <p className="job-error">{job.error}</p> : null}
+      </div>
+    );
+  }
+
   async function checkBackend() {
     setHealth({
       status: "loading",
@@ -314,15 +437,16 @@ export default function Home() {
         );
       }
 
-      const data = (await response.json()) as UploadedDocument;
+      const data = (await response.json()) as ProcessingJobResponse;
+      trackJob(data.job);
 
       setUpload({
         status: "success",
-        message: "Document uploaded and saved to the database.",
-        document: data
+        message: "Document uploaded. Background processing has started.",
+        document: data.document,
+        job: data.job
       });
       await loadDocuments();
-      await loadChunks(data.id);
     } catch (error) {
       setUpload({
         status: "error",
@@ -374,6 +498,15 @@ export default function Home() {
   }
 
   function clearDeletedDocument(documentId: number) {
+    setActiveJobs((currentJobs) => {
+      const nextJobs: Record<number, ProcessingJob> = {};
+      for (const job of Object.values(currentJobs)) {
+        if (job.document_id !== documentId) {
+          nextJobs[job.id] = job;
+        }
+      }
+      return nextJobs;
+    });
     if (selectedDocument?.id === documentId) {
       setSelectedDocument(null);
       setChunks([]);
@@ -478,14 +611,15 @@ export default function Home() {
         );
       }
 
-      const data = (await response.json()) as UploadedDocument;
+      const data = (await response.json()) as ProcessingJobResponse;
+      trackJob(data.job);
       setWebImport({
         status: "success",
-        message: "Web page imported and indexed.",
-        document: data
+        message: "Web page imported. Background processing has started.",
+        document: data.document,
+        job: data.job
       });
       await loadDocuments();
-      await loadChunks(data.id);
     } catch (error) {
       setWebImport({
         status: "error",
@@ -547,7 +681,9 @@ export default function Home() {
         throw new Error(`Reprocess failed with ${response.status}`);
       }
 
-      const updatedDocument = (await response.json()) as DocumentRecord;
+      const data = (await response.json()) as ProcessingJobResponse;
+      const updatedDocument = data.document as DocumentRecord;
+      trackJob(data.job);
       setSelectedDocument(updatedDocument);
       setFlashcardDocument(updatedDocument);
       setFlashcards([]);
@@ -565,7 +701,6 @@ export default function Home() {
       setActiveMindMapId(null);
       setMindMapMessage("Mind maps were cleared because the document was reprocessed.");
       await loadDocuments();
-      await loadChunks(updatedDocument.id);
     } catch (error) {
       setDocumentsMessage(
         error instanceof Error ? error.message : "Could not reprocess document."
@@ -1130,6 +1265,7 @@ export default function Home() {
               ) : null}
             </dl>
           ) : null}
+          {renderJobProgress(upload.job)}
           <div className="web-import">
             <label className="file-label" htmlFor="web-url">
               Import a public web page
@@ -1178,6 +1314,7 @@ export default function Home() {
                 </div>
               </dl>
             ) : null}
+            {renderJobProgress(webImport.job)}
           </div>
         </div>
         <div className="documents-panel">
@@ -1197,6 +1334,7 @@ export default function Home() {
               <div><dt>Mind maps</dt><dd>{storageStats.mind_map_count}</dd></div>
               <div><dt>Flashcards</dt><dd>{storageStats.flashcard_count}</dd></div>
               <div><dt>Quiz attempts</dt><dd>{storageStats.quiz_attempt_count}</dd></div>
+              <div><dt>Processing jobs</dt><dd>{storageStats.processing_job_count}</dd></div>
               <div><dt>Orphan files</dt><dd>{storageStats.orphan_file_count}</dd></div>
             </dl>
           ) : null}
@@ -1204,7 +1342,10 @@ export default function Home() {
           <p className="health-message">{documentsMessage}</p>
           {documents.length > 0 ? (
             <ul className="documents-list">
-              {documents.map((document) => (
+              {documents.map((document) => {
+                const activeJob = jobForDocument(document.id);
+
+                return (
                 <li key={document.id}>
                   <div className="document-identity">
                     <span className="document-name">{document.filename}</span>
@@ -1245,11 +1386,11 @@ export default function Home() {
                   </span>
                   <button
                     className="secondary-button compact-button"
-                    disabled={reprocessingId === document.id}
+                    disabled={reprocessingId === document.id || Boolean(activeJob)}
                     onClick={() => void reprocessDocument(document)}
                     type="button"
                   >
-                    {reprocessingId === document.id ? "Working..." : "Reprocess"}
+                    {reprocessingId === document.id || activeJob ? "Working..." : "Reprocess"}
                   </button>
                   <button
                     className="link-button"
@@ -1306,8 +1447,12 @@ export default function Home() {
                     <Trash2 aria-hidden="true" size={17} />
                   </button>
                   <span>{new Date(document.created_at).toLocaleString()}</span>
+                  {activeJob ? (
+                    <div className="document-job">{renderJobProgress(activeJob)}</div>
+                  ) : null}
                 </li>
-              ))}
+                );
+              })}
             </ul>
           ) : null}
         </div>

@@ -54,6 +54,27 @@ class DocumentChunk(Base):
     )
 
 
+class ProcessingJob(Base):
+    __tablename__ = "processing_jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    document_id: Mapped[int] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    job_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    status: Mapped[str] = mapped_column(String(50), default="queued", nullable=False)
+    stage: Mapped[str] = mapped_column(String(80), default="queued", nullable=False)
+    message: Mapped[str] = mapped_column(Text, default="Waiting to start.", nullable=False)
+    progress_current: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    progress_total: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class Flashcard(Base):
     __tablename__ = "flashcards"
 
