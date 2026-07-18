@@ -41,6 +41,44 @@ Answer:"""
     return response.json()["response"].strip()
 
 
+def format_chat_history(messages: list[dict[str, str]]) -> str:
+    if not messages:
+        return "No previous conversation."
+
+    lines = []
+    for message in messages[-8:]:
+        role = message["role"].strip().title()
+        content = message["content"].strip()
+        if role and content:
+            lines.append(f"{role}: {content}")
+
+    return "\n".join(lines) if lines else "No previous conversation."
+
+
+def generate_chat_answer(
+    question: str, context: str, history: list[dict[str, str]]
+) -> str:
+    prompt = f"""You are an AI learning assistant inside a saved study chat.
+
+Answer the current question using only the provided retrieved context and the conversation history.
+The conversation history helps you resolve follow-up wording like "it", "that idea", or "the previous protocol".
+If the retrieved context does not contain enough information, say that the uploaded material does not provide enough information.
+When you use information from the retrieved context, cite it with source labels like [Source 1] or [Source 2].
+
+Conversation history:
+{format_chat_history(history)}
+
+Retrieved context:
+{context}
+
+Current question:
+{question}
+
+Answer:"""
+
+    return request_local_model(prompt, timeout=180)
+
+
 def extract_json_array(text: str) -> list[dict[str, str]]:
     cleaned = text.strip()
     if cleaned.startswith("```"):

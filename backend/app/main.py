@@ -1,5 +1,6 @@
 from pathlib import Path
 import csv
+from datetime import datetime
 import io
 import json
 from typing import Literal
@@ -21,12 +22,15 @@ from .embeddings import create_embedding
 from .llm import (
     CHAT_MODEL,
     generate_answer,
+    generate_chat_answer,
     generate_document_summary,
     generate_flashcards,
     generate_mind_map,
     generate_quiz_questions,
 )
 from .models import (
+    ChatMessage,
+    ChatSession,
     Document,
     DocumentChunk,
     DocumentMindMap,
@@ -93,6 +97,15 @@ class SummaryGenerateRequest(BaseModel):
     mode: Literal["brief", "detailed"] = "brief"
 
 
+class ChatSessionCreateRequest(BaseModel):
+    title: str | None = Field(default=None, max_length=120)
+
+
+class ChatMessageCreateRequest(BaseModel):
+    content: str = Field(min_length=1)
+    top_k: int = Field(default=5, ge=1, le=10)
+
+
 def vector_literal(vector: list[float]) -> str:
     return "[" + ",".join(str(value) for value in vector) + "]"
 
@@ -151,6 +164,31 @@ def job_response(job: ProcessingJob) -> dict[str, object]:
     }
 
 
+def chat_session_response(session: ChatSession, db: Session) -> dict[str, object]:
+    message_count = (
+        db.query(ChatMessage).filter(ChatMessage.session_id == session.id).count()
+    )
+    return {
+        "id": session.id,
+        "document_id": session.document_id,
+        "title": session.title,
+        "message_count": message_count,
+        "created_at": session.created_at.isoformat(),
+        "updated_at": session.updated_at.isoformat(),
+    }
+
+
+def chat_message_response(message: ChatMessage) -> dict[str, object]:
+    return {
+        "id": message.id,
+        "session_id": message.session_id,
+        "role": message.role,
+        "content": message.content,
+        "sources": message.sources or [],
+        "created_at": message.created_at.isoformat(),
+    }
+
+
 def create_processing_job(
     document: Document,
     db: Session,
@@ -186,6 +224,7 @@ def create_tables() -> None:
     ensure_document_parse_columns()
     ensure_chunk_embedding_columns()
     ensure_processing_job_columns()
+    ensure_chat_columns()
     db = SessionLocal()
     try:
         mark_interrupted_jobs(db)
@@ -302,6 +341,25 @@ def ensure_processing_job_columns() -> None:
         connection.execute(
             text(
                 "ALTER TABLE processing_jobs ADD COLUMN IF NOT EXISTS completed_at TIMESTAMP"
+            )
+        )
+
+
+def ensure_chat_columns() -> None:
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS title VARCHAR(120) NOT NULL DEFAULT 'Study chat'"
+            )
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT NOW()"
+            )
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS sources JSONB"
             )
         )
 
@@ -516,6 +574,8 @@ def storage_stats(db: Session = Depends(get_db)) -> dict[str, int]:
         "quiz_question_count": db.query(func.count(QuizQuestion.id)).scalar() or 0,
         "quiz_attempt_count": db.query(func.count(QuizAttempt.id)).scalar() or 0,
         "processing_job_count": db.query(func.count(ProcessingJob.id)).scalar() or 0,
+        "chat_session_count": db.query(func.count(ChatSession.id)).scalar() or 0,
+        "chat_message_count": db.query(func.count(ChatMessage.id)).scalar() or 0,
     }
 
 
@@ -542,6 +602,133 @@ def list_document_chunks(
         }
         for chunk in chunks
     ]
+
+
+@app.post("/documents/{document_id}/chat-sessions")
+def create_chat_session(
+    document_id: int,
+    request: ChatSessionCreateRequest,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    document = db.get(Document, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    title = (request.title or "").strip() or f"Study chat: {document.original_filename}"
+    session = ChatSession(document_id=document_id, title=title[:120])
+    db.add(session)
+    db.commit()
+    db.refresh(session)
+
+    return chat_session_response(session, db)
+
+
+@app.get("/documents/{document_id}/chat-sessions")
+def list_chat_sessions(
+    document_id: int, db: Session = Depends(get_db)
+) -> list[dict[str, object]]:
+    document = db.get(Document, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    sessions = (
+        db.query(ChatSession)
+        .filter(ChatSession.document_id == document_id)
+        .order_by(ChatSession.updated_at.desc())
+        .all()
+    )
+    return [chat_session_response(session, db) for session in sessions]
+
+
+@app.get("/chat-sessions/{session_id}/messages")
+def list_chat_messages(
+    session_id: int, db: Session = Depends(get_db)
+) -> list[dict[str, object]]:
+    session = db.get(ChatSession, session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Chat session not found")
+
+    messages = (
+        db.query(ChatMessage)
+        .filter(ChatMessage.session_id == session_id)
+        .order_by(ChatMessage.created_at.asc(), ChatMessage.id.asc())
+        .all()
+    )
+    return [chat_message_response(message) for message in messages]
+
+
+@app.post("/chat-sessions/{session_id}/messages")
+def send_chat_message(
+    session_id: int,
+    request: ChatMessageCreateRequest,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    session = db.get(ChatSession, session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Chat session not found")
+
+    document = db.get(Document, session.document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if document.parse_status != "parsed":
+        raise HTTPException(
+            status_code=400,
+            detail="Document must be parsed before starting a study chat",
+        )
+
+    question = request.content.strip()
+    previous_messages = (
+        db.query(ChatMessage)
+        .filter(ChatMessage.session_id == session_id)
+        .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
+        .limit(8)
+        .all()
+    )
+    history = [
+        {"role": message.role, "content": message.content}
+        for message in reversed(previous_messages)
+    ]
+
+    user_message = ChatMessage(
+        session_id=session_id,
+        role="user",
+        content=question,
+        sources=[],
+    )
+    db.add(user_message)
+    db.flush()
+
+    results = semantic_search(question, request.top_k, db, document_id=session.document_id)
+    context = "\n\n".join(
+        f"Source {index + 1}: {result['filename']}, chunk {int(result['chunk_index']) + 1}\n{result['content']}"
+        for index, result in enumerate(results)
+    )
+    answer = generate_chat_answer(question, context, history)
+
+    assistant_message = ChatMessage(
+        session_id=session_id,
+        role="assistant",
+        content=answer,
+        sources=results,
+    )
+    session.updated_at = datetime.utcnow()
+    if session.title.startswith("Study chat:"):
+        session.title = question[:70]
+
+    db.add(assistant_message)
+    db.add(session)
+    db.commit()
+    db.refresh(user_message)
+    db.refresh(assistant_message)
+    db.refresh(session)
+
+    return {
+        "session": chat_session_response(session, db),
+        "messages": [
+            chat_message_response(user_message),
+            chat_message_response(assistant_message),
+        ],
+    }
 
 
 def flashcard_response(card: Flashcard) -> dict[str, object]:
@@ -1014,14 +1201,15 @@ def submit_quiz(
 
 
 def semantic_search(
-    query: str, top_k: int, db: Session
+    query: str, top_k: int, db: Session, document_id: int | None = None
 ) -> list[dict[str, object]]:
     query_embedding = create_embedding(query)
     query_vector = vector_literal(query_embedding)
+    document_filter = "AND dc.document_id = :document_id" if document_id else ""
 
     rows = db.execute(
         text(
-            """
+            f"""
             SELECT
                 dc.id,
                 dc.document_id,
@@ -1033,11 +1221,12 @@ def semantic_search(
             FROM document_chunks dc
             JOIN documents d ON d.id = dc.document_id
             WHERE dc.embedding IS NOT NULL
+            {document_filter}
             ORDER BY dc.embedding <=> (:query_vector)::vector
             LIMIT :top_k
             """
         ),
-        {"query_vector": query_vector, "top_k": top_k},
+        {"query_vector": query_vector, "top_k": top_k, "document_id": document_id},
     ).mappings()
 
     return [

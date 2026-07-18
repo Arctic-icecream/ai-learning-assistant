@@ -102,6 +102,24 @@ type SearchResult = {
   distance: number;
 };
 
+type ChatSession = {
+  id: number;
+  document_id: number;
+  title: string;
+  message_count: number;
+  created_at: string;
+  updated_at: string;
+};
+
+type ChatMessage = {
+  id: number;
+  session_id: number;
+  role: "user" | "assistant";
+  content: string;
+  sources: SearchResult[];
+  created_at: string;
+};
+
 type AnswerState = {
   status: "idle" | "loading" | "success" | "error";
   message: string;
@@ -181,6 +199,8 @@ type StorageStats = {
   quiz_question_count: number;
   quiz_attempt_count: number;
   processing_job_count: number;
+  chat_session_count: number;
+  chat_message_count: number;
 };
 
 function formatBytes(bytes: number): string {
@@ -228,6 +248,17 @@ export default function Home() {
     answer: "",
     sources: []
   });
+  const [chatDocument, setChatDocument] = useState<DocumentRecord | null>(null);
+  const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
+  const [activeChatSession, setActiveChatSession] =
+    useState<ChatSession | null>(null);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState("");
+  const [chatMessage, setChatMessage] = useState(
+    "Select a parsed document to start a study chat."
+  );
+  const [creatingChatSession, setCreatingChatSession] = useState(false);
+  const [sendingChatMessage, setSendingChatMessage] = useState(false);
   const [flashcards, setFlashcards] = useState<Flashcard[]>([]);
   const [flashcardsMessage, setFlashcardsMessage] = useState(
     "Select a document to view flashcards."
@@ -535,6 +566,14 @@ export default function Home() {
       setActiveMindMapId(null);
       setMindMapMessage("Select a document to view saved mind maps.");
     }
+    if (chatDocument?.id === documentId) {
+      setChatDocument(null);
+      setChatSessions([]);
+      setActiveChatSession(null);
+      setChatMessages([]);
+      setChatInput("");
+      setChatMessage("Select a parsed document to start a study chat.");
+    }
     if (upload.document?.id === documentId) {
       setUpload({ status: "idle", message: "No file uploaded yet." });
     }
@@ -658,11 +697,194 @@ export default function Home() {
   async function selectDocument(document: DocumentRecord) {
     setSelectedDocument(document);
     await loadChunks(document.id);
+    await loadChatSessions(document);
     await loadFlashcards(document);
     await loadQuiz(document);
     await loadQuizAttempts(document);
     await loadSummaries(document);
     await loadMindMaps(document);
+  }
+
+  async function loadChatSessions(document: DocumentRecord) {
+    setChatDocument(document);
+    setChatMessage("Loading study chat sessions...");
+
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:8000/documents/${document.id}/chat-sessions`
+      );
+
+      if (!response.ok) {
+        throw new Error(`Chat session list failed with ${response.status}`);
+      }
+
+      const data = (await response.json()) as ChatSession[];
+      setChatSessions(data);
+      setChatMessage(
+        data.length === 0
+          ? "No study chat sessions for this document yet."
+          : `${data.length} study chat session${data.length === 1 ? "" : "s"} found.`
+      );
+      if (data.length > 0) {
+        await selectChatSession(data[0]);
+      } else {
+        setActiveChatSession(null);
+        setChatMessages([]);
+      }
+    } catch (error) {
+      setChatMessage(
+        error instanceof Error ? error.message : "Could not load study chat sessions."
+      );
+    }
+  }
+
+  async function createChatSession(document: DocumentRecord): Promise<ChatSession | null> {
+    setCreatingChatSession(true);
+    setChatDocument(document);
+    setChatMessage(`Creating a study chat for ${document.filename}...`);
+
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:8000/documents/${document.id}/chat-sessions`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ title: `Study chat: ${document.filename}` })
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(`Chat session creation failed with ${response.status}`);
+      }
+
+      const session = (await response.json()) as ChatSession;
+      setChatSessions((currentSessions) => [session, ...currentSessions]);
+      setActiveChatSession(session);
+      setChatMessages([]);
+      setChatMessage("Study chat created. Ask your first question.");
+      return session;
+    } catch (error) {
+      setChatMessage(
+        error instanceof Error ? error.message : "Could not create a study chat."
+      );
+      return null;
+    } finally {
+      setCreatingChatSession(false);
+    }
+  }
+
+  async function selectChatSession(session: ChatSession) {
+    setActiveChatSession(session);
+    setChatMessage("Loading chat messages...");
+
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:8000/chat-sessions/${session.id}/messages`
+      );
+
+      if (!response.ok) {
+        throw new Error(`Chat messages failed with ${response.status}`);
+      }
+
+      const data = (await response.json()) as ChatMessage[];
+      setChatMessages(data);
+      setChatMessage(
+        data.length === 0
+          ? "This study chat has no messages yet."
+          : `${data.length} saved message${data.length === 1 ? "" : "s"} loaded.`
+      );
+    } catch (error) {
+      setChatMessage(
+        error instanceof Error ? error.message : "Could not load chat messages."
+      );
+    }
+  }
+
+  async function sendStudyChatMessage() {
+    if (!chatDocument) {
+      setChatMessage("Select a document before chatting.");
+      return;
+    }
+    if (chatDocument.parse_status !== "parsed") {
+      setChatMessage("This document must finish parsing before chat can use it.");
+      return;
+    }
+
+    let session = activeChatSession;
+    if (!session) {
+      session = await createChatSession(chatDocument);
+      if (!session) return;
+    }
+
+    const content = chatInput.trim();
+    if (!content) {
+      setChatMessage("Enter a question before sending.");
+      return;
+    }
+
+    setSendingChatMessage(true);
+    setChatMessage("Generating a contextual answer...");
+
+    const temporaryUserMessage: ChatMessage = {
+      id: Date.now(),
+      session_id: session.id,
+      role: "user",
+      content,
+      sources: [],
+      created_at: new Date().toISOString()
+    };
+    setChatMessages((currentMessages) => [...currentMessages, temporaryUserMessage]);
+    setChatInput("");
+
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:8000/chat-sessions/${session.id}/messages`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ content, top_k: 5 })
+        }
+      );
+
+      if (!response.ok) {
+        const errorData = (await response.json().catch(() => null)) as {
+          detail?: string;
+        } | null;
+        throw new Error(
+          errorData?.detail ?? `Study chat failed with ${response.status}`
+        );
+      }
+
+      const data = (await response.json()) as {
+        session: ChatSession;
+        messages: ChatMessage[];
+      };
+
+      setActiveChatSession(data.session);
+      setChatSessions((currentSessions) => [
+        data.session,
+        ...currentSessions.filter((currentSession) => currentSession.id !== data.session.id)
+      ]);
+      setChatMessages((currentMessages) => [
+        ...currentMessages.filter((message) => message.id !== temporaryUserMessage.id),
+        ...data.messages
+      ]);
+      setChatMessage("Answer saved to this study chat.");
+    } catch (error) {
+      setChatMessages((currentMessages) =>
+        currentMessages.filter((message) => message.id !== temporaryUserMessage.id)
+      );
+      setChatInput(content);
+      setChatMessage(
+        error instanceof Error ? error.message : "Could not send chat message."
+      );
+    } finally {
+      setSendingChatMessage(false);
+    }
   }
 
   async function reprocessDocument(document: DocumentRecord) {
@@ -700,6 +922,11 @@ export default function Home() {
       setMindMaps([]);
       setActiveMindMapId(null);
       setMindMapMessage("Mind maps were cleared because the document was reprocessed.");
+      setChatDocument(updatedDocument);
+      setChatSessions([]);
+      setActiveChatSession(null);
+      setChatMessages([]);
+      setChatMessage("Study chats should be reloaded after the document is reprocessed.");
       await loadDocuments();
     } catch (error) {
       setDocumentsMessage(
@@ -1161,7 +1388,7 @@ export default function Home() {
   return (
     <main className="shell">
       <section className="hero">
-        <p className="eyebrow">Day 18 storage management</p>
+        <p className="eyebrow">Day 20 study chat</p>
         <h1>AI Learning Assistant</h1>
         <p className="summary">
           Upload learning materials, build a knowledge base, and ask questions
@@ -1335,6 +1562,8 @@ export default function Home() {
               <div><dt>Flashcards</dt><dd>{storageStats.flashcard_count}</dd></div>
               <div><dt>Quiz attempts</dt><dd>{storageStats.quiz_attempt_count}</dd></div>
               <div><dt>Processing jobs</dt><dd>{storageStats.processing_job_count}</dd></div>
+              <div><dt>Chat sessions</dt><dd>{storageStats.chat_session_count}</dd></div>
+              <div><dt>Chat messages</dt><dd>{storageStats.chat_message_count}</dd></div>
               <div><dt>Orphan files</dt><dd>{storageStats.orphan_file_count}</dd></div>
             </dl>
           ) : null}
@@ -1435,6 +1664,13 @@ export default function Home() {
                     type="button"
                   >
                     Quiz
+                  </button>
+                  <button
+                    className="link-button"
+                    onClick={() => void loadChatSessions(document)}
+                    type="button"
+                  >
+                    Chat
                   </button>
                   <button
                     aria-label={`Delete ${document.filename}`}
@@ -1637,6 +1873,107 @@ export default function Home() {
                 </li>
               ))}
             </ol>
+          ) : null}
+        </div>
+        <div className="study-chat-panel">
+          <div className="study-chat-heading">
+            <h2>
+              Study Chat
+              {chatDocument ? `: ${chatDocument.filename}` : ""}
+            </h2>
+            <div className="study-chat-actions">
+              {chatDocument ? (
+                <button
+                  className="secondary-button"
+                  disabled={creatingChatSession}
+                  onClick={() => void createChatSession(chatDocument)}
+                  type="button"
+                >
+                  {creatingChatSession ? "Creating..." : "New Chat"}
+                </button>
+              ) : null}
+            </div>
+          </div>
+          <p className="health-message">{chatMessage}</p>
+          {chatDocument ? (
+            <div className="study-chat-layout">
+              <aside className="chat-sessions-list">
+                {chatSessions.length > 0 ? (
+                  chatSessions.map((session) => (
+                    <button
+                      className={
+                        activeChatSession?.id === session.id ? "active" : ""
+                      }
+                      key={session.id}
+                      onClick={() => void selectChatSession(session)}
+                      type="button"
+                    >
+                      <strong>{session.title}</strong>
+                      <span>
+                        {session.message_count} message{session.message_count === 1 ? "" : "s"}
+                      </span>
+                    </button>
+                  ))
+                ) : (
+                  <p>No saved chats yet.</p>
+                )}
+              </aside>
+              <div className="chat-workspace">
+                <div className="chat-messages">
+                  {chatMessages.length > 0 ? (
+                    chatMessages.map((message) => (
+                      <article
+                        className={`chat-bubble ${message.role}`}
+                        key={message.id}
+                      >
+                        <span className="chat-role">{message.role}</span>
+                        <p>{message.content}</p>
+                        {message.role === "assistant" && message.sources.length > 0 ? (
+                          <div className="chat-sources">
+                            <strong>Sources</strong>
+                            <ol>
+                              {message.sources.map((source, index) => (
+                                <li key={`${message.id}-${source.chunk_id}`}>
+                                  Source {index + 1}: {source.filename}, chunk{" "}
+                                  {source.chunk_index + 1}, distance{" "}
+                                  {source.distance.toFixed(4)}
+                                  <p>{source.content.slice(0, 260)}</p>
+                                </li>
+                              ))}
+                            </ol>
+                          </div>
+                        ) : null}
+                      </article>
+                    ))
+                  ) : (
+                    <p className="health-message">
+                      Ask a question to begin a saved multi-turn study chat.
+                    </p>
+                  )}
+                </div>
+                <div className="chat-composer">
+                  <textarea
+                    disabled={sendingChatMessage}
+                    onChange={(event) => setChatInput(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+                        void sendStudyChatMessage();
+                      }
+                    }}
+                    placeholder="Ask a follow-up question about this document"
+                    value={chatInput}
+                  />
+                  <button
+                    className="primary-button"
+                    disabled={sendingChatMessage || !chatDocument}
+                    onClick={() => void sendStudyChatMessage()}
+                    type="button"
+                  >
+                    {sendingChatMessage ? "Thinking..." : "Send"}
+                  </button>
+                </div>
+              </div>
+            </div>
           ) : null}
         </div>
         <div className="flashcards-panel">
